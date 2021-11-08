@@ -1,0 +1,124 @@
+1. open text file
+2. generate list of words.
+3. create a sequence matcher object
+4. get input form user about which words to match
+5. match input w list of words using sequence matcher object (set difflib at .65 for optimal returns)
+6. return top matches
+
+-is difflib the best?
+    -outliers?
+    -are we still missing words? Are all the words showing up?
+    -difflib is based on word distance
+    -possibly search with first letter the same as requirement?
+    -prefixes?
+    -Andrea said there's very little way to excise words that are un-useful to the searcher,
+    because the methods for knowing which words are or aren't useful would be context-dependant.
+    Getting rid of words that don't start with p when you search for "Plurabelle" would result in
+    losing "deplurabel". Equally, trying to hodge-podge a function that allowed words that didn't start
+    with p to pass if they were prefixed, like "de" or "un", wouldn't work for everything either; when you
+    search "Earwicker", there's a result that comes up "Grinwicker"-which obviously has reference to the original
+    word but does not have the same first letter. Trying to code for all these outliers would be difficult,
+    especially since you don't even know all the odd situations which your code would have to account for (you
+    don't know all the 'rules' to Joyce's variations). This hasn't even confronted the issue of finding root words
+    based on similar language, or allowing users to search their own neologisms; but the project could eschew those
+    issues. At face value, joyce.py is a really useful tool for someone wanting to find similar words in finnegans
+    wake. Its almost at the point where there's so few results from a query, that an experienced user can filter
+    through the un-useful searches themself. But would a somewhat naive user be able to do that? Probably. But an
+    optimal website/function would return only those results that pertain to the word queried. Should ask Maragaret
+    about this/ask for help in my status report.
+    -Words that mesh languages would probably be caught by this function, but if a word is repeatedly referenced
+    there's still similarity in spelling throughout, regardless of using or inserting foreign spellings or aspects
+    from other languages.That said, there could be phonetic versions of words that have totally different spellings,
+    but use totally different spellings that rely on the user knowing another language. However, I do not know of a
+    specific example of that yet, and anyway, the search function has narrowed in on one specific fix, not a
+    "fix-all", to FW: how to find recurring words in the text with a looser set of perameters. As stated, some
+    alternate spellings could still be caught by this, and the search function would anyway return instances of a
+    non-English word (and its variates), as long as the user prompts for it.
+    -really common words like "saint", or short words that have significant "Shem" return tons of results.
+    -Literally just need the joyce search function to return LINE NUMBERS to improve results for this program.
+    users could figure out the relevance of uncertainly-related words by checking line. The program would be for
+    experts not n00bs!
+    -need it to have a rtf file that has no errors in-text, and ideally standardized along line-numbering that Joyce
+    scholars agree on. Does the Fweet website have a .txt file somewhere on the site I can steal?
+    -could possibly return results as hyperlinks to the full FW text on another page! That way, a user could click
+    on a result and see where it lands in the book (would also clear up the un-useful results, and may even prove
+    some results that seem unrelated are actually related. This could take the place of page-numbering. Home page
+    should contain a clear explanation of how to use the search engine, what role it plays and improves on in FW
+    text search.
+    -Home page should have a picture of Joyce (and possibly an 8-bit version of "Finnegan's Wake" song play at
+    least once).
+    -still haven't solved how to know if words are meant to be pseudo-translated ("worldins merken" to "marken"<-esp
+    difficult here because the norweigan original has been split in two for Joyce's prose. could possibly rely on
+    researchers to input foreign languages to see if they (or similar words) are in FW. This would again require the
+    search function to be diffuse enough to 'guess' similarities between real words and joyce's inventions (so could
+    probably only return sub-optimal results). But still, the idea that you could encourage the user to input words
+    in other languages to see if they, or similar words, are in the text could be really useful.
+    -Could possibly collapse results on the same word when a query has been made, so that the page looks less messy.
+    If there are multiples of a word, when a user clicks on it the list expands vertically before allowing them to
+    access a hyperlinked version of the text via the results (this would look a little cleaner, and also allude to
+    the fact that multiples of a really high number probably are irrelevant to the query. the user would have to
+    figure that out; don't spell that out because the opposite could actually be true in some cases). Use a
+    subscript to list the amount of duplicates in black, non-hyperlinked text, for results that have duplicates.
+    -even with all these features, would be ideal to have page references in txt. ideally, for all FW versions
+    -difflib has trouble with words that might be the same, but has -s added on the end. searching for "marken"
+    does not return "merkins", which is in-text (the Ibsen example); creating the word "markens" does (among tons
+    of other results. adding the -s returns more, so makes the results less reliable, even though it was the only
+    way to return the word I wanted it to match with).
+    -HUGE problem for the scope of project: words that he loosley (playfully) translates are very far from each
+    other ("verdens" ("world" in the norweigan) does not return "worldlins", a playful neologism. while there
+    might be some very far back cognate relationship between these two, it speaks to the larger problem of when
+    joyce used words that have phonetic similarity to a foreign word, not spelled or even semantic similarity-
+    that's the point of a pun; the relationship was not originally there. there might not be a workaround for this.
+    if so, emphasize on the homepage that this site is a "companion" to other FW search functions, and explain why
+    with examples on the homepage (img files in body of search result screenshots?) of what the program can and
+    can't do.
+    -need to attribute website to Andrea McKinnon after the term is over
+    -get rid of 92's and /
+    -possibly add difflib set of matched words in original set
+    -allow users to adjust sensitivty 0-9 with the default as 5 (allows users to go above or below the .6 set value). make this
+    very optional and explain that it won't significantly, but is an advanced option.
+    -do the different split/remove punctuation options return different results? if so, which one reliably returns better
+    results? does one version return all the results of another, and more?
+    -should consider using the functions in joyce3 to return all of the unique results done on a difflib of the original matches.
+    this would result in an even (probably hundreds) higher list of results, even when duplicates are collapsed. but would ensure
+    some words that might be related to original have a higher probability of getting returned. however, would the same success
+    occur just by lowering the threshold on the difflib number value?
+    -joyce.py returned more results than joyce4.py, but didn't have "dumbelles" (which a search in-text suggests it
+    relates to "Plurabelle", since its in a section about femininity). As a test, I lowered the difflib threshold
+    to .57, and return about 50 more unique results (including dumbelles). Should keep difflib at this setting or
+    around .57; the collapse function I create on site should make it more visually readable. This ensures the most
+    relevant results (at the expense of slightly more unnecessary ones) from the search.
+    -wait, lowered the threshold to .5 and still getting relevant results. If the bottom of the list are considered
+    least-relevant words, "donahbella" still is relevant and only shows up with .5 (not .51). however, you need to
+    set n to 3000 to account for all the results, AND you get 801 unique results in this search (with relevant words
+    showing up at the bottom, like above and "Ombrellone" so not able to just tighten it or you'd lose them. Either
+    you accept that the search won't get EVERYTHING and keep it higher, OR set at .55 and allow users to tweak above
+    and below this value (and set n to 3000 at least). OR, see if the other string-splitter returns different results
+    OR accept that the difflib search isn't ideal. I don't see the problem with setting at .5 and allowing users to
+    only tweak higher (0 through 9). Would have to make the "refine option" more integrated, although then the
+    tradeoff is that users would automatically use the refine option and miss some variations, just because there
+    was so much text. either you explain to people to don't refine (it really just trims), or set in at .5 with a
+    "see more results" option, or have a way to visually represent approx 800 items on page without it seeming
+    dense and overwhelming. the last option would be best, but not feasible. would the function in joyce3 clean
+    this up, or just create added problems?
+    -even .45 has relevant results at the bottom, like "Elizbeliza".
+    -should probably retain and re-implement for loops that separate list into more- and less-likely similar words (joyce3.py)
+    -just set it to .5 and have an option for users to go -10 to 10 in either direction. ("10" would take you to .45 "-10" would
+    take you to .65.
+    -should probably have the results print apostrophes, in order for a person to do a search on the word (or at least have
+    hypertext recognize the word if it has apostrophe/ligature/accent in original)
+    to do: -define all inputs
+           -make sure text is outputted as needed
+           -how to locate a word in the text using a list (already ordered; get a position for every list)
+
+-I am not going to submit this project because it does not reflect that I have mastered the material.
+    to do (post-course):
+    -would be ideal if items printed horizontally, even if there are 3 columns. i.e., instead of items first printing down the 1st
+    column, then the 2nd (etc), they would snake to the right on the second term then back down to the 1st column on the fourth
+    term. This way, someone could 'read' the print-out in order of relavance from left to right, instead of seeing much less
+    relevance results at the top of the 2nd and 3rd columns (and think they are as relevant as the top items in the 1st column.
+    -need items in results to be single spaced, not with room in between vertically as it is now.
+    -it would almost be better if the difflib could compare a search term to words not separated by spaces (because sometimes words are split into two).
+    that way, "verdensmarken" could maybe stand a chance getting matched to "worldlins merkins".
+    but how would you do that? how could you keep the function from thinking it had to compare a search term to the entire chunk of text as one string,
+    without granularizing the text into discrete words separated by spaces?

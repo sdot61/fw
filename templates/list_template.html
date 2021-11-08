@@ -1,0 +1,24 @@
+<!--List group template adapted from: https://www.w3schools.com/bootstrap/tryit.asp?filename=trybs_collapsible_listgroup&stacked=h and https://getbootstrap.com/docs/5.0/components/list-group/ -->
+  <ul class="list-group" id = "list{{loop_index}}">
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+          <a data-toggle="collapse" data-parent = "#list{{loop_index}}" href="#{{match}}">{{match}}</a>
+           <span class="badge bg-primary rounded-pill">
+             {{positions | length}}
+           </span>
+      </li>
+      <div id={{match}} class="panel-collapse collapse">
+        <div class = "panel-body">
+        <!--prints label for a match with multiple results in a collapsable format-->
+        <ul class="list-group list-group-flush">
+          {% for p in positions %}
+            <li class = "list-group-item">
+              <a target = "_blank" href = "/finneganswake#{{p.positions}}">
+                {{p.word}}
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+        </div>
+      </div>
+   </ul>
+
