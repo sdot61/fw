@@ -24,7 +24,7 @@ jobs:
          args: zip -qq -r ${{ steps.time.outputs.time }}.zip .
       - name: Upload zip archive to S3 bucket
         uses: zdurham/s3-upload-github-action@master
-        with:
+        env:
           FILE: ./${{ steps.time.outputs.time }}.zip
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CODEDEPLOY_SECRET_ACCESS_KEY }}
