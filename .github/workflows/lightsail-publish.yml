@@ -12,13 +12,13 @@ jobs:
       - name: Archive
         uses: montudor/action-zip@v1
         with:
-         args: zip -qq -r build_$GITHUB_SHA.zip .
+         args: zip -qq -r format("build_{0}.zip", $GITHUB_SHA) .
       - name: Upload zip archive to S3 bucket
         uses: zdurham/s3-upload-github-action@master
         env:
-          FILE: ./build_$GITHUB_SHA.zip
+          FILE: format("./build_{0}.zip", $GITHUB_SHA)
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CODEDEPLOY_SECRET_ACCESS_KEY }}
           AWS_REGION: "us-east-1"
           S3_BUCKET: "fw-code-deploy"
-          S3_KEY: build_$GITHUB_SHA.zip
+          S3_KEY: format("build_{0}.zip", $GITHUB_SHA)
