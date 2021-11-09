@@ -1,7 +1,2 @@
 #!/bin/bash
-pid=$(cat /tmp/app.pid)
-
-if [pid>0]
-then
-  kill -9 pid
-fi;
+kill $(pgrep -f 'python3.8 ./application.py')
