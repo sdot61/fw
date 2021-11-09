@@ -1,6 +1,7 @@
 #!/bin/bash
 sudo yum update
-sudo yum remove python2.7 -y
-sudo yum install python37 -y
+sudo amazon-linux-extras enable python3.8
+sudo yum install python3.8 -y
 sudo yum install python3-pip -y
-cd /app && pip install --user requirements.txt
+sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.8
+cd /app && pip install --user -r requirements.txt
