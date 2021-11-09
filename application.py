@@ -1,5 +1,3 @@
-import os
-import re
 import difflib
 import string
 from flask import Flask, flash, redirect, render_template, request
@@ -62,4 +60,4 @@ def finneganswake():
     return render_template('finneganswake.html')
 
 if __name__ == "__main__":
-    application.run(host='0.0.0.0', port=(re.search("ec2\\.internal+$", os.environ['HOSTNAME']) if 80 else 5000))
+    application.run(host='0.0.0.0', port=80)
