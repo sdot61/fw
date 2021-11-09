@@ -1,2 +1,2 @@
 #!/bin/bash
-cd /app && python ./application.py
+python ./application.py
