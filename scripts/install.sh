@@ -1,7 +1,7 @@
 #!/bin/bash
 sudo yum update
-sudo yum install python-pip
-sudo yum install python-flask
-sudo yum install apache2
-sudo yum install libapache2-mod-wsgi
+sudo yum install python-pip -y
+sudo yum install python-flask -y
+sudo yum install apache2 -y
+sudo yum install libapache2-mod-wsgi -y
 cd .. && pip install -r requirements.txt
