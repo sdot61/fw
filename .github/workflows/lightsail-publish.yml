@@ -9,22 +9,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Get HEAD
-        id: vars
-        run: echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
-      - name: Set File Key
-        id: key
-        run: echo "::set-output name=file_key::build_${{steps.vars.outputs.sha_short}}.zip"
       - name: Archive
         uses: montudor/action-zip@v1
         with:
-         args: zip -qq -r ${{ steps.key.outputs.file_key }} .
+         args: zip -qq -r fw-site-archive.zip .
       - name: Upload zip archive to S3 bucket
         uses: zdurham/s3-upload-github-action@master
         env:
-          FILE: ./${{ steps.key.outputs.file_key }}
+          FILE: ./fw-site-archive.zip
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CODEDEPLOY_SECRET_ACCESS_KEY }}
           AWS_REGION: 'us-east-1'
           S3_BUCKET: 'fw-code-deploy'
-          S3_KEY: ${{ steps.key.outputs.file_key }}
+          S3_KEY: 'fw-site-archive.zip'
