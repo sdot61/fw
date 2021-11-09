@@ -61,4 +61,4 @@ def finneganswake():
     return render_template('finneganswake.html')
 
 if __name__ == "__main__":
-    application.run(host='0.0.0.0', port=5000)
+    application.run(host='0.0.0.0', port=(os.environ['PORT'] if os.environ['PORT'] else 5000))
