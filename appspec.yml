@@ -7,6 +7,10 @@ hooks:
     - location: scripts/start.sh
       runas: root
       timeout: 300
+  ApplicationStop:
+    - location: scripts/stop.sh
+      runas: root
+      timeout: 300
 os: linux
 runas: root
 version: 0.0
