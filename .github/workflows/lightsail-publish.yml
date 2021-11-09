@@ -9,25 +9,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-        with:
-          timeZone: 8
-          format: "YYYY-MM-DD"
-      - name: Get Time
-        id: time
-        uses: nanzm/get-time-action@v1.1
-        with:
-          timeZone: 8
-          format: 'YYYY-MM-DD'
       - name: Archive
         uses: montudor/action-zip@v1
         with:
-         args: zip -qq -r ${{ steps.time.outputs.time }}_$GITHUB_SHA.zip .
+         args: zip -qq -r build_$GITHUB_SHA.zip .
       - name: Upload zip archive to S3 bucket
         uses: zdurham/s3-upload-github-action@master
         env:
-          FILE: ./${{ steps.time.outputs.time }}_$GITHUB_SHA.zip
+          FILE: ./build_$GITHUB_SHA.zip
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CODEDEPLOY_SECRET_ACCESS_KEY }}
           AWS_REGION: "us-east-1"
           S3_BUCKET: "fw-code-deploy"
-          S3_KEY: ${{ steps.time.outputs.time }}_$GITHUB_SHA.zip
+          S3_KEY: build_$GITHUB_SHA.zip
