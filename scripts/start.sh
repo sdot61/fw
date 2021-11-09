@@ -5,4 +5,4 @@ sudo yum update -y
 cd /app
 pip3 install --user -r requirements.txt
 python3.8 -m pip install flask
-python3.8 ./application.py
+nohup python3.8 ./application.py &
