@@ -13,7 +13,7 @@ jobs:
         uses: montudor/action-zip@v1
         with:
          args: zip -qq -r build.zip .
-      - name: Upload infrastructure files to S3 bucket
+      - name: Upload zip archive to S3 bucket
         uses: eonx-com/actions-s3-copy@v0.1-alpha
         with:
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
@@ -22,7 +22,7 @@ jobs:
           DESTINATION_BUCKET: "fw-code-deploy"
           SOURCE_PREFIX: "build"
           SOURCE_SUFFIX: ".zip"
-          DESTINATION_PREFIX: ""
-          DESTINATION_SUFFIX: ""
-          TIMESTAMP: "true"
+          DESTINATION_PREFIX: "build"
+          DESTINATION_SUFFIX: ".zip"
+          TIMESTAMP: true
 
