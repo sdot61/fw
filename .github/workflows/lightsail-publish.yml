@@ -18,7 +18,7 @@ jobs:
         with:
           AWS_ACCESS_KEY_ID: ${{ secrets.CODEDEPLOY_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CODEDEPLOY_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: "us-east-1"
+          AWS_REGION: "us-east-1"
           DESTINATION_BUCKET: "fw-code-deploy"
           SOURCE_PREFIX: "build"
           SOURCE_SUFFIX: ".zip"
