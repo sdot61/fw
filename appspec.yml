@@ -1,0 +1,16 @@
+---
+files:
+  - destination: /app
+    source: /
+hooks:
+  AfterInstall:
+    - location: scripts/install.sh
+      runas: root
+      timeout: 300
+  ApplicationStart:
+    - location: scripts/start.sh
+      runas: root
+      timeout: 300
+os: linux
+runas: root
+version: 0.0
