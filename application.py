@@ -34,14 +34,17 @@ def index():
             for word in line.split(' '):
                 text_words.append(word)
                 strip_word = word.translate(str.maketrans('', '', string.punctuation))
-                text_words_lower.append(strip_word.lower())
-                word_mapping[strip_word.lower()] = word_mapping.get(strip_word.lower(), []) + [dict(line = pos, twlp = len(text_words) -1)]
+                if strip_word:
+                    text_words_lower.append(strip_word.lower())
+                    word_mapping[strip_word.lower()] = word_mapping.get(strip_word.lower(), []) + [dict(line = pos, twlp = len(text_words) -1)]
 
 
         # difflib function from python libraries for getting close matches
         n = 3000
         cutoff = 0.45
-        matches = difflib.get_close_matches(search_word.lower(), text_words_lower, n, cutoff)
+        matches = []
+        if search_word:
+            matches = difflib.get_close_matches(search_word.lower(), text_words_lower, n, cutoff)
 
         # gets position of every word, via each line, including any other characters, in matches to send to html rendering
         match_positions = []
