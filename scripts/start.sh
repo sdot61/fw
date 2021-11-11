@@ -9,4 +9,4 @@ pip3 install forever
 python3.8 -m pip install flask
 #export PORT=80
 #sudo  python3.8 -m forever.run ./application.py >/dev/null 2>&1 &
-sudo python3.8 ./application.py >/dev/null 2>&1 &
+sudo nohup python3.8 ./application.py >log.txt 2>&1 &
