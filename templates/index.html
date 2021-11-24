@@ -5,6 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-wEmeIV1mKuiNpC+IOBjI7aAzPcEZeedi5yW5f2yOq55WWLwNGmvvx4Um1vskeMj0" crossorigin="anonymous">
         <link href="/static/css/index.css" rel = "stylesheet">
+      
     </head>
 
     <body>
@@ -17,7 +18,7 @@
                 <p class="small-lead mb-2">Search for a word in Finnegans Wake.
                     <br> Words that are similar and might have some reference (intentional or not, on Joyce's part) will appear.
                     <br>Allow time for matches to load.
-                    <br>Do not scroll or use mouse when linked to FW text (Allow time for engine to search for word).
+                    <br>Allow time for search to locate word. Wait to scroll or use mouse when linked to FW text.
                 </p>
             </div>
             <form method="post" action = "/">
@@ -36,7 +37,7 @@
                     </div>
                 </div>
             </form>
-
+        
             <div class="row">
                 <div class="col">
                 <!--template for injecting match and position of found word onto page-->
@@ -73,7 +74,7 @@
                 {% endfor %}
                 </div>
             </div>
-
+     
         </div>
     </body>
 
