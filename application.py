@@ -13,7 +13,7 @@ application.config["DEBUG"] = True
 @application.route("/", methods = ['GET', 'POST'])
 def index():
     if request.method == 'HEAD':
-        return ""
+        return chr(0)
     if request.method == 'GET':
         return render_template('index.html')
     if request.method == 'POST':
