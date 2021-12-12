@@ -1,2 +1,3 @@
 #!/bin/bash
+cd /app
 sudo python3.8 ./application.py >log.txt 2>&1 &
