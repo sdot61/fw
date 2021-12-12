@@ -3,9 +3,10 @@ Description=Finnegans Wake Flask App
 
 [Service]
 Type=simple
-ExecStart=/app/startup
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
+ExecStart=/usr/bin/python3.8 /app/application.py
+#Restart=on-failure
+#StartLimitInterval=10
+#StartLimitBurst=2
 
 [Install]
 WantedBy=multi-user.target
