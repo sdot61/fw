@@ -1,0 +1,5 @@
+[Unit]
+Description=Systemd Config For Flask App Launch & Restart
+
+[Service]
+ExecStart=/app/startup
