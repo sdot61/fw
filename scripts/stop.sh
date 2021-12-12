@@ -1,2 +1,2 @@
 #!/bin/bash
-kill $(pgrep -f 'nohup') >/dev/null 2>&1 &
+sudo systemctl stop flask-app.service
