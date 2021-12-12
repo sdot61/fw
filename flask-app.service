@@ -1,5 +1,7 @@
 [Unit]
-Description=Systemd Config For Flask App Launch & Restart
+Description=Finnegans Wake Flask App
 
 [Service]
 ExecStart=/app/startup
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
