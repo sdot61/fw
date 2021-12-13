@@ -42,8 +42,8 @@ def index():
 
 
         # difflib function from python libraries for getting close matches
-        n = 1000
-        cutoff = 0.5
+        n = 3000
+        cutoff = 0.45
         matches = []
         if search_word:
             matches = difflib.get_close_matches(search_word.lower(), text_words_lower, n, cutoff)
