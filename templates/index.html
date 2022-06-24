@@ -5,7 +5,22 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-wEmeIV1mKuiNpC+IOBjI7aAzPcEZeedi5yW5f2yOq55WWLwNGmvvx4Um1vskeMj0" crossorigin="anonymous">
         <link href="/static/css/index.css" rel = "stylesheet">
-      
+      <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
+            <script>
+
+            $(document).ready(function(){
+               var myVar;
+             $( "#button" ).click(function() {
+                myFunction(this);
+            });
+
+             function myFunction(div) {
+             $("#loader").toggle();
+             $(div).toggle();
+
+                 }
+            });
+             </script>
     </head>
 
     <body>
@@ -15,12 +30,14 @@
                 <p class="lead mb-2"> Enter text to search</p>
             </div>
                <div class="row px-4 py-4">
-                <p class="small-lead mb-2">Search for a word in Finnegans Wake.
+                <p class="small-lead mb-2">Hello, here you can search for a word in Finnegans Wake.
                     <br> Words that are similar and might have some reference (intentional or not, on Joyce's part) will appear.
                     <br>Allow time for matches to load.
                     <br>Allow time for search to locate word. Wait to scroll or use mouse when linked to FW text.
                 </p>
             </div>
+        
+		</div>
             <form method="post" action = "/">
                 <div class="row text-center justify-content-center">
                     <div class="col col-md-2">
@@ -34,8 +51,11 @@
                 <div class="row text-center justify-content-center mt-3">
                     <div class="col col-md-2">
                         <button type="submit" class="btn btn-outline-dark">Submit</button>
+                    </div> 
+                    
+                <div class="buttonbox" style="display: none" id="loader">
+			            <div id="load"></div>
                     </div>
-                </div>
             </form>
         
             <div class="row">
