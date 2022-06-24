@@ -10,7 +10,7 @@
 
 }
 div#load {
-	background: url("/img/ring.gif");
+	background: url("ring.gif");
 	border: none;
 	width: 115px;
 	height: 115px;
