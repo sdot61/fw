@@ -10,7 +10,7 @@
 
 }
 div#load {
-	background: url("https://github.com/sdot61/fw/blob/5be5e55543320605f79befb898ffd37b9570f45b/ring.gif");
+	background: url("/img/ring.gif");
 	border: none;
 	width: 115px;
 	height: 115px;
