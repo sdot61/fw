@@ -24,7 +24,7 @@
      left: 0;
      margin: auto;
      border: 5px solid transparent;
-     border-top-color: #ffffff;
+     border-top-color: ##0000ff;
      border-radius: 50%;
      animation: button-loading-spinner 1s ease infinite;
      
