@@ -18,7 +18,6 @@ def index():
         return render_template('index.html')
     if request.method == 'POST':
         search_word = request.form.get("searchWord")
-
         # assigns list for function
         with open("finneganswake.txt", "r") as f:
             text = f.read()
@@ -62,6 +61,8 @@ def index():
 # new route for finnegans wake hyperlinked text
 @application.route("/finneganswake", methods = ['GET'])
 def finneganswake():
+    if request.referrer is None:
+        return render_template('fw-redirect.html')
     return render_template('finneganswake.html')
 
 if __name__ == "__main__":
