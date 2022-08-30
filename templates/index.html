@@ -31,7 +31,7 @@
                 </div>
                 <div class="row text-center justify-content-center mt-3">
                     <div class="col col-md-2">
-                        <button type="submit" class="btn btn-outline-dark button--loading">Submit</button>
+                        <button type="submit" class="btn btn-outline-dark button--loading" onclick="showOverlay()">Submit</button>
                     </div>
                 </div>
             </form>
@@ -74,6 +74,9 @@
             </div>
 
         </div>
+        <div id="loading_overlay">
+            <img src="/static/images/ring.gif"/>
+        </div>
        <script>
             const btn = document.querySelector(".button");
 
@@ -85,4 +88,10 @@
     <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+    <script>
+        const showOverlay = () => {
+            const el = document.getElementById("loading_overlay");
+            el.style.display = "flex";
+        }
+    </script>
 </html>
