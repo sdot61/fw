@@ -1,5 +1,6 @@
 import difflib
 import string
+import re
 from flask import Flask, flash, redirect, render_template, request
 from werkzeug.exceptions import default_exceptions, HTTPException, InternalServerError
 
@@ -9,8 +10,9 @@ application = Flask(__name__)
 application.config["TEMPLATES_AUTO_RELOAD"] = True
 application.config["DEBUG"] = True
 
+
 # route for main html page
-@application.route("/", methods = ['GET', 'POST'])
+@application.route("/", methods=['GET', 'POST'])
 def index():
     if request.method == 'HEAD':
         return "\n"
@@ -37,8 +39,8 @@ def index():
                 strip_word = word.translate(str.maketrans('', '', string.punctuation))
                 if strip_word:
                     text_words_lower.append(strip_word.lower())
-                    word_mapping[strip_word.lower()] = word_mapping.get(strip_word.lower(), []) + [dict(line = pos, twlp = len(text_words) -1)]
-
+                    word_mapping[strip_word.lower()] = word_mapping.get(strip_word.lower(), []) + [
+                        dict(line=pos, twlp=len(text_words) - 1)]
 
         # difflib function from python libraries for getting close matches
         n = 3000
@@ -54,16 +56,18 @@ def index():
             word_positions_mapping = []
             for position in word_positions:
                 word_orig = text_words[position.get('twlp')]
-                word_positions_mapping.append(dict(word = word_orig, positions = position.get('line')))
-            match_positions.append(dict(match = match.lower(), positions = word_positions_mapping))
-        return render_template('index.html', match = match_positions, search_word = search_word)
+                word_positions_mapping.append(dict(word=word_orig, positions=position.get('line')))
+            match_positions.append(dict(match=match.lower(), positions=word_positions_mapping))
+        return render_template('index.html', match=match_positions, search_word=search_word)
+
 
 # new route for finnegans wake hyperlinked text
-@application.route("/finneganswake", methods = ['GET'])
+@application.route("/finneganswake", methods=['GET'])
 def finneganswake():
-    if request.referrer is None:
+    if (request.referrer is None) or (re.search("/finneganswake$", request.referrer) is None):
         return render_template('fw-redirect.html')
     return render_template('finneganswake.html')
+
 
 if __name__ == "__main__":
     application.run(host='0.0.0.0', port=80)
