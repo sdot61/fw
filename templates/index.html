@@ -92,6 +92,9 @@
         const showOverlay = () => {
             const el = document.getElementById("loading_overlay");
             el.style.display = "flex";
+            el.style.top = `${window.scrollY}px`;
+            el.style.left = `${window.scrollX}px`;
+            document.body.style.overflow = 'clip'
         }
     </script>
 </html>
