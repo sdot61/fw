@@ -64,9 +64,6 @@ def index():
 # new route for finnegans wake hyperlinked text
 @application.route("/finneganswake", methods=['GET'])
 def finneganswake():
-    print("request.referrer: " + request.referrer)
-    if (request.referrer is None) or (re.search("/finneganswake$", request.referrer) is None):
-        return render_template('fw-redirect.html')
     return render_template('finneganswake.html')
 
 

@@ -5,10 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/css/bootstrap.min.css" rel="stylesheet"
           integrity="sha384-wEmeIV1mKuiNpC+IOBjI7aAzPcEZeedi5yW5f2yOq55WWLwNGmvvx4Um1vskeMj0" crossorigin="anonymous">
-
+    <link href="/static/css/index.css" rel="stylesheet">
+    <style type="text/css">
+        #loading_overlay {
+            display: flex;
+            z-index: 1000
+        }
+    </style>
+    <script>
+        const _fnc = (event) => {
+            removeEventListener('scroll', _fnc);
+            setTimeout(() => {
+                const el = document.getElementById("loading_overlay");
+                el.style.display = "none";
+            }, 900);
+        }
+        addEventListener('scroll', _fnc)
+    </script>
     <title>Finnegans Wake</title>
 </head>
 <body>
+<div id="loading_overlay">
+    <img src="/static/images/ring.gif"/>
+</div>
 <div class="container">
     <div class="row">
         <h1>Finnegans Wake</h1>
@@ -13008,15 +13027,10 @@
         </div>
     </div>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-p34f1UUtsS3wqzfto5wAAmdvj+osOnFyQFpp4Ua3gs/ZVWx6oOypYoCJhGGScy+8"
         crossorigin="anonymous"></script>
-<script>
-    setTimeout(() => {
-        const umap = location.href.split("#");
-        location.href = `#${umap[1]}`
-        history.replaceState(null, null, location.href)
-    }, 100)
-</script>
+
 </body>
 </html>
