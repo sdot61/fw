@@ -1,71 +1,59 @@
-import difflib
+from fuzzywuzzy import process
 import string
-import re
-from flask import Flask, flash, redirect, render_template, request
-from werkzeug.exceptions import default_exceptions, HTTPException, InternalServerError
+from flask import Flask, render_template, request
+import os
 
 application = Flask(__name__)
-
-# Ensure templates are auto-reloaded
 application.config["TEMPLATES_AUTO_RELOAD"] = True
 application.config["DEBUG"] = True
 
+# Load and process Finnegans Wake once
+TEXT_PATH = "finneganswake.txt"
+if not os.path.exists(TEXT_PATH):
+    raise FileNotFoundError(f"{TEXT_PATH} not found. Make sure it exists in the working directory.")
 
-# route for main html page
-@application.route("/", methods=['GET', 'POST'])
+with open(TEXT_PATH, "r") as f:
+    text = f.read()
+
+text_lines = text.split('\n')
+text_words = []
+text_words_lower = []
+word_mapping = {}
+
+for pos, line in enumerate(text_lines):
+    for word in line.split():
+        text_words.append(word)
+        cleaned = word.translate(str.maketrans('', '', string.punctuation))
+        if cleaned:
+            lw = cleaned.lower()
+            text_words_lower.append(lw)
+            word_mapping.setdefault(lw, []).append(dict(line=pos, twlp=len(text_words) - 1))
+
+@application.route("/", methods=["GET", "POST"])
 def index():
-    if request.method == 'HEAD':
+    if request.method == "HEAD":
         return "\n"
-    if request.method == 'GET':
-        return render_template('index.html')
-    if request.method == 'POST':
-        search_word = request.form.get("searchWord")
-        # assigns list for function
-        with open("finneganswake.txt", "r") as f:
-            text = f.read()
+    if request.method == "GET":
+        return render_template("index.html")
 
-        # splits file for function same as way html read text
-        text_lines = text.split('\n')
+    search_word = request.form.get("searchWord", "").strip()
+    match_positions = []
 
-        # word mapping to dictionary to prepare for hyperlink, stripped of punctuation
-        text_words = []
-        text_words_lower = []
-        word_mapping = {}
+    if search_word:
+        matches = process.extractBests(search_word.lower(), text_words_lower, score_cutoff=65, limit=3000)
+        seen = set()
+        for match, score in matches:
+            if match not in seen:
+                seen.add(match)
+                positions = word_mapping.get(match, [])
+                mapped = [dict(word=text_words[p["twlp"]], positions=p["line"]) for p in positions]
+                match_positions.append(dict(match=match, positions=mapped))
 
-        # iterates through lines and words on lines; twlp = position for every stripped word
-        for pos, line in enumerate(text_lines):
-            for word in line.split(' '):
-                text_words.append(word)
-                strip_word = word.translate(str.maketrans('', '', string.punctuation))
-                if strip_word:
-                    text_words_lower.append(strip_word.lower())
-                    word_mapping[strip_word.lower()] = word_mapping.get(strip_word.lower(), []) + [
-                        dict(line=pos, twlp=len(text_words) - 1)]
+    return render_template("index.html", match=match_positions, search_word=search_word)
 
-        # difflib function from python libraries for getting close matches
-        n = 3000
-        cutoff = 0.35
-        matches = []
-        if search_word:
-            matches = difflib.get_close_matches(search_word.lower(), text_words_lower, n, cutoff)
-
-        # gets position of every word, via each line, including any other characters, in matches to send to html rendering
-        match_positions = []
-        for match in set(matches):
-            word_positions = word_mapping.get(match.lower())
-            word_positions_mapping = []
-            for position in word_positions:
-                word_orig = text_words[position.get('twlp')]
-                word_positions_mapping.append(dict(word=word_orig, positions=position.get('line')))
-            match_positions.append(dict(match=match.lower(), positions=word_positions_mapping))
-        return render_template('index.html', match=match_positions, search_word=search_word)
-
-
-# new route for finnegans wake hyperlinked text
-@application.route("/finneganswake", methods=['GET'])
+@application.route("/finneganswake", methods=["GET"])
 def finneganswake():
-    return render_template('finneganswake.html')
-
+    return render_template("finneganswake.html")
 
 if __name__ == "__main__":
-    application.run(host='0.0.0.0', port=80)
+    application.run(host="0.0.0.0", port=80)
