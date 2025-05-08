@@ -1,100 +1,95 @@
-import string
 import re
-from flask import Flask, render_template, request, jsonify
-from fuzzywuzzy import fuzz, process
+import string
 
-application = Flask(__name__)
+from flask import Flask, request, jsonify, render_template
 
-# Ensure templates are auto-reloaded
-application.config["TEMPLATES_AUTO_RELOAD"] = True
-application.config["DEBUG"] = False  # turn off debug in production
+# fuzzy and distance libs
+from rapidfuzz import process, fuzz
+import jellyfish
+import Levenshtein
 
-def is_valid_query(query):
-    # Accept only letters, numbers, and common punctuation, max 100 characters
-    return bool(re.match(r"^[\w\s\.,'-]{1,100}$", query))
+app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["DEBUG"] = False  # turn off in prod
 
-def search_finnegans_wake(search_word):
-    # Load text
-    with open("finneganswake.txt", "r") as f:
-        text = f.read()
+# ---  Pre‐load the text & build indexes  --------------------------
 
-    # Split lines and words
-    text_lines  = text.split("\n")
-    text_words  = []
-    word_mapping = {}
+with open("finneganswake.txt", "r") as f:
+    lines = f.read().splitlines()
 
-    for line_no, line in enumerate(text_lines):
-        for raw in line.split(" "):
-            text_words.append(raw)
-            key = raw.translate(str.maketrans("", "", string.punctuation)).lower()
-            if key:
-                word_mapping.setdefault(key, []).append({
-                    "word": raw,
-                    "line": line_no
-                })
+# vocabulary: lowercase stripped words → list of appearances
+vocab = set()
+positions = {}  # word_lower → [ { line: int, word: original } ]
+word_re = re.compile(r"\b[\w'-]+\b")
 
-    # Use fuzzywuzzy to get close matches
-    # process.extract returns (candidate, score) tuples
-    # We only keep those above a threshold (e.g. 35%)
-    all_keys = list(word_mapping.keys())
-    limit = 3000
-    threshold = 35  # percent
+for lineno, line in enumerate(lines):
+    for raw in word_re.findall(line):
+        stripped = raw.strip(string.punctuation)
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        vocab.add(lower)
+        positions.setdefault(lower, []).append({
+            "word": raw,
+            "line": lineno
+        })
 
-    matches = [
-        match for match, score in process.extract(
-            search_word.lower(),
-            all_keys,
-            limit=limit,
-            scorer=fuzz.WRatio
-        )
-        if score >= threshold
+# Precompute phonetic (Metaphone) buckets
+phonetic_buckets = {}
+for w in vocab:
+    code = jellyfish.metaphone(w)
+    phonetic_buckets.setdefault(code, []).append(w)
+
+
+# ---  Flask routes  ------------------------------------------------
+
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
+
+
+@app.route("/search", methods=["POST"])
+def search():
+    data = request.get_json(force=True, silent=True) or {}
+    query = data.get("query", "")
+    q = query.strip().lower()
+    if not q:
+        return jsonify([])
+
+    # 1) phonetic “cognates” via Metaphone
+    qc = jellyfish.metaphone(q)
+    phonetic_matches = phonetic_buckets.get(qc, [])
+
+    # 2) close by edit‐distance (<= 3 edits)
+    lev_matches = [
+        w for w in vocab
+        if Levenshtein.distance(q, w) <= 3
     ]
 
-    # Build positions for unique matches
-    results = []
-    for key in set(matches):
-        entries = word_mapping.get(key, [])
-        positions = [
-            {"word": e["word"], "positions": e["line"]}
-            for e in entries
-        ]
-        results.append({"match": key, "positions": positions})
+    # 3) fuzzy ratio (token‐sort for word order invariance)
+    fuzzy_results = process.extract(
+        q,
+        vocab,
+        scorer=fuzz.token_sort_ratio,
+        limit=100
+    )
+    fuzzy_matches = [w for w, score, _ in fuzzy_results if score >= 60]
 
-    return results
+    # Combine all signals
+    all_matches = set(phonetic_matches) \
+                | set(lev_matches) \
+                | set(fuzzy_matches)
 
-# Main page
-@application.route("/", methods=["GET", "POST", "HEAD"])
-def index():
-    if request.method == "HEAD":
-        return "\n"
-    if request.method == "GET":
-        return render_template("index.html")
-    # POST
-    search_word = request.form.get("searchWord", "").strip()
-    if not is_valid_query(search_word):
-        # You could flash an error or render with an error message
-        return render_template("index.html", error="Invalid input", search_word=search_word)
+    # Build the JSON response
+    out = []
+    for w in all_matches:
+        out.append({
+            "match": w,
+            "positions": positions.get(w, [])
+        })
 
-    match_positions = search_finnegans_wake(search_word)
-    return render_template("index.html", match=match_positions, search_word=search_word)
+    return jsonify(out)
 
-# JSON API endpoint
-@application.route("/search", methods=["POST"])
-def api_search():
-    data = request.get_json(force=True, silent=True) or {}
-    query = data.get("query", "").strip()
-
-    if not is_valid_query(query):
-        return jsonify({"error": "Invalid input"}), 400
-
-    results = search_finnegans_wake(query)
-    return jsonify(results), 200
-
-# Static hyperlinked text
-@application.route("/finneganswake", methods=["GET"])
-def finneganswake():
-    return render_template("finneganswake.html")
 
 if __name__ == "__main__":
-    # Development server (Gunicorn should be used in production)
-    application.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=80)
