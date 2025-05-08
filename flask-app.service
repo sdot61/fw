@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=ec2-user
 WorkingDirectory=/app
-ExecStart=ec2-user/.local/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 application:application
+ExecStart=home/ec2-user/.local/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 application:application
 Restart=always
 
 [Install]
