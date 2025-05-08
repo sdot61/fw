@@ -81,4 +81,4 @@ def index():
         })
 
     return render_template(
-        "index.htm
+        "index.html"
