@@ -6,7 +6,8 @@ After=network.target
 User=ec2-user
 WorkingDirectory=/app
 ExecStart=/home/ec2-user/.local/bin/gunicorn \
-    --workers 3 \
+    --workers 1 \
+    --timeout 120 \
     --bind 0.0.0.0:8080 \
     application:app
 Restart=always
