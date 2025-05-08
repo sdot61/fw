@@ -1,27 +1,25 @@
 {# templates/list_template.html #}
-<ul class="list-group" id="list-{{ loop_index }}">
-  <li class="list-group-item d-flex justify-content-between align-items-center">
-    <!-- Collapse toggle -->
-    <a data-bs-toggle="collapse"
-       href="#collapse-{{ loop_index }}"
-       role="button"
-       aria-expanded="false"
-       aria-controls="collapse-{{ loop_index }}">
+<ul class="list-group mb-3" id="list{{ loop_index }}">
+  <li class="list-group-item p-0 border-0">
+    <button
+      class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+      data-toggle="collapse"
+      data-target="#collapse-{{ loop_index }}"
+      aria-expanded="false"
+      aria-controls="collapse-{{ loop_index }}">
       {{ match }}
-    </a>
-    <span class="badge bg-primary rounded-pill">
-      {{ positions|length }}
-    </span>
+      <span class="badge badge-primary badge-pill">
+        {{ positions|length }}
+      </span>
+    </button>
   </li>
 
-  <!-- Collapsible container; its id must match the href above -->
-  <div class="collapse" id="collapse-{{ loop_index }}">
+  <div id="collapse-{{ loop_index }}" class="collapse">
     <ul class="list-group list-group-flush">
       {% for p in positions %}
         <li class="list-group-item">
-          <!-- Jump to the exact line on finneganswake -->
-          <a href="{{ url_for('finneganswake') }}#line-{{ p.line }}">
-            line {{ p.line + 1 }}: “{{ p.word }}”
+          <a href="/finneganswake#{{ p.line }}" target="_blank">
+            {{ p.word }}
           </a>
         </li>
       {% endfor %}
