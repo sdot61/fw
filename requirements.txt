@@ -9,3 +9,6 @@ Werkzeug==2.0.1
 zipp==3.6.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.12.2
+rapidfuzz>=2.0.0            # fast, modern fuzzy matching
+jellyfish>=0.9.0            # phonetic algorithms (Metaphone)
+
