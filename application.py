@@ -1,24 +1,22 @@
 import re
 import string
 
-from flask import Flask, request, render_template
-
+from flask import Flask, request, jsonify, render_template
 from rapidfuzz import process, fuzz
 import jellyfish
 import Levenshtein
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False   # turn off in prod
+app.config["DEBUG"] = False  # turn off in prod
 
-# --- Pre-load the text & build indexes --------------------------
+# --- Pre-load the text & build indexes -------------------------
 
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
-# vocabulary: lowercase stripped words → set of originals & positions
 vocab = set()
-positions = {}  # word_lower → [ { "line": int, "word": original } ]
+positions = {}  # word_lower → [ { line: int, word: original} ]
 word_re = re.compile(r"\b[\w'-]+\b")
 
 for lineno, line in enumerate(lines):
@@ -33,34 +31,71 @@ for lineno, line in enumerate(lines):
             "line": lineno
         })
 
-# Precompute phonetic (Metaphone) buckets
 phonetic_buckets = {}
 for w in vocab:
     code = jellyfish.metaphone(w)
     phonetic_buckets.setdefault(code, []).append(w)
 
 
-# --- Flask routes ----------------------------------------------
+# --- Flask routes -----------------------------------------------
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    # On GET, just render empty form
-    if request.method == "GET":
-        return render_template("index.html", match=[], search_word="")
+    if request.method == "POST":
+        search_word = request.form.get("searchWord", "").strip().lower()
+        if not search_word:
+            return render_template("index.html", match=[], search_word="")
 
-    # On POST, pull the form field
-    q = request.form.get("searchWord", "").strip().lower()
+        # phonetic matches
+        qc = jellyfish.metaphone(search_word)
+        phonetic_matches = phonetic_buckets.get(qc, [])
+
+        # edit-distance matches
+        lev_matches = [
+            w for w in vocab
+            if Levenshtein.distance(search_word, w) <= 3
+        ]
+
+        # fuzzy-ratio matches
+        fuzzy_results = process.extract(
+            search_word,
+            vocab,
+            scorer=fuzz.token_sort_ratio,
+            limit=100
+        )
+        fuzzy_matches = [w for w, score, _ in fuzzy_results if score >= 60]
+
+        # combine
+        all_matches = set(phonetic_matches) | set(lev_matches) | set(fuzzy_matches)
+        out = [
+            {"match": w, "positions": positions.get(w, [])}
+            for w in all_matches
+        ]
+
+        return render_template("index.html", match=out, search_word=search_word)
+
+    # GET
+    return render_template("index.html", match=[], search_word="")
+
+
+@app.route("/search", methods=["POST"])
+def search_api():
+    data = request.get_json(force=True, silent=True) or {}
+    q = data.get("query", "").strip().lower()
     if not q:
-        return render_template("index.html", match=[], search_word="")
+        return jsonify([])
 
-    # 1) phonetic “cognates” via Metaphone
-    code = jellyfish.metaphone(q)
-    phonetic_matches = phonetic_buckets.get(code, [])
+    # phonetic
+    qc = jellyfish.metaphone(q)
+    phonetic_matches = phonetic_buckets.get(qc, [])
 
-    # 2) close by edit-distance (<= 3 edits)
-    lev_matches = [w for w in vocab if Levenshtein.distance(q, w) <= 3]
+    # edit-distance
+    lev_matches = [
+        w for w in vocab
+        if Levenshtein.distance(q, w) <= 3
+    ]
 
-    # 3) fuzzy match (token-sort ratio)
+    # fuzzy
     fuzzy_results = process.extract(
         q,
         vocab,
@@ -69,16 +104,14 @@ def index():
     )
     fuzzy_matches = [w for w, score, _ in fuzzy_results if score >= 60]
 
-    # Combine all signals
     all_matches = set(phonetic_matches) | set(lev_matches) | set(fuzzy_matches)
+    out = [
+        {"match": w, "positions": positions.get(w, [])}
+        for w in all_matches
+    ]
+    return jsonify(out)
 
-    # Build the context for template
-    out = []
-    for w in all_matches:
-        out.append({
-            "match": w,
-            "positions": positions.get(w, [])
-        })
 
-    return render_template(
-        "index.html"
+if __name__ == "__main__":
+    # when run directly, listen on 8080
+    app.run(host="0.0.0.0", port=8080)
