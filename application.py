@@ -26,7 +26,5 @@ def search():
     if not is_valid_query(query):
         return jsonify({"error": "Invalid input"}), 400
 
-    results = search_finnegans_wake(query)
-    return jsonify(results)
-    if __name__ == "__main__":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
