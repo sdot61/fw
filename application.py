@@ -110,7 +110,10 @@ def search_api():
         for w in all_matches
     ]
     return jsonify(out)
-
+@app.route("/finneganswake", methods=["GET"])
+def finneganswake():
+    # pass enumerate(lines) so Jinja can see line numbers
+    return render_template("finneganswake.html", lines=enumerate(lines))
 
 if __name__ == "__main__":
     # when run directly, listen on 8080
