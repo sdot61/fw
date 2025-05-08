@@ -1,25 +1,24 @@
 import re
 import string
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, render_template
 
-# fuzzy and distance libs
 from rapidfuzz import process, fuzz
 import jellyfish
 import Levenshtein
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # turn off in prod
+app.config["DEBUG"] = False   # turn off in prod
 
-# ---  Pre‐load the text & build indexes  --------------------------
+# --- Pre-load the text & build indexes --------------------------
 
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
-# vocabulary: lowercase stripped words → list of appearances
+# vocabulary: lowercase stripped words → set of originals & positions
 vocab = set()
-positions = {}  # word_lower → [ { line: int, word: original } ]
+positions = {}  # word_lower → [ { "line": int, "word": original } ]
 word_re = re.compile(r"\b[\w'-]+\b")
 
 for lineno, line in enumerate(lines):
@@ -41,32 +40,27 @@ for w in vocab:
     phonetic_buckets.setdefault(code, []).append(w)
 
 
-# ---  Flask routes  ------------------------------------------------
+# --- Flask routes ----------------------------------------------
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def index():
-    return render_template("index.html")
+    # On GET, just render empty form
+    if request.method == "GET":
+        return render_template("index.html", match=[], search_word="")
 
-
-@app.route("/search", methods=["POST"])
-def search():
-    data = request.get_json(force=True, silent=True) or {}
-    query = data.get("query", "")
-    q = query.strip().lower()
+    # On POST, pull the form field
+    q = request.form.get("searchWord", "").strip().lower()
     if not q:
-        return jsonify([])
+        return render_template("index.html", match=[], search_word="")
 
     # 1) phonetic “cognates” via Metaphone
-    qc = jellyfish.metaphone(q)
-    phonetic_matches = phonetic_buckets.get(qc, [])
+    code = jellyfish.metaphone(q)
+    phonetic_matches = phonetic_buckets.get(code, [])
 
-    # 2) close by edit‐distance (<= 3 edits)
-    lev_matches = [
-        w for w in vocab
-        if Levenshtein.distance(q, w) <= 3
-    ]
+    # 2) close by edit-distance (<= 3 edits)
+    lev_matches = [w for w in vocab if Levenshtein.distance(q, w) <= 3]
 
-    # 3) fuzzy ratio (token‐sort for word order invariance)
+    # 3) fuzzy match (token-sort ratio)
     fuzzy_results = process.extract(
         q,
         vocab,
@@ -76,11 +70,9 @@ def search():
     fuzzy_matches = [w for w, score, _ in fuzzy_results if score >= 60]
 
     # Combine all signals
-    all_matches = set(phonetic_matches) \
-                | set(lev_matches) \
-                | set(fuzzy_matches)
+    all_matches = set(phonetic_matches) | set(lev_matches) | set(fuzzy_matches)
 
-    # Build the JSON response
+    # Build the context for template
     out = []
     for w in all_matches:
         out.append({
@@ -88,8 +80,5 @@ def search():
             "positions": positions.get(w, [])
         })
 
-    return jsonify(out)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=80)
+    return render_template(
+        "index.htm
