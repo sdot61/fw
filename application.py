@@ -7,7 +7,7 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any 3-letter word occurring ≥ this will be demoted
+High_Freq_Cutoff    = 6    # any 1–3 letter word occurring ≥ this will be demoted
 DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
@@ -75,7 +75,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 3b) fuzzy token_set_ratio (≥60)
+    # 3b) token_set_ratio (≥60)
     for w, score, _ in process.extract(q, vocab,
                                        scorer=fuzz.token_set_ratio,
                                        limit=200):
@@ -97,20 +97,19 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # 6) phonetic match via Double Metaphone → boost to 100
+    # 6) phonetic soft match via Double Metaphone
     pcode, scode = doublemetaphone(q)
-    for code in (pcode, scode):
-        if not code:
-            continue
-        for w in phonetic_buckets.get(code, []):
-            scores[w] = max(scores.get(w, 0), 100)
+    for bucket_code, words in phonetic_buckets.items():
+        # include any bucket whose code is within edit-distance 1 of either query code
+        if (pcode and Levenshtein.distance(pcode, bucket_code) <= 1) or \
+           (scode and Levenshtein.distance(scode, bucket_code) <= 1):
+            for w in words:
+                scores[w] = max(scores.get(w, 0), 90)
 
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) identify the “tail” words:
-    #    • All 1- or 2-letter words, plus
-    #    • 3-letter words with freq ≥ High_Freq_Cutoff
+    # 8) identify “tail” words: any 1–2 letter word OR 3-letter words with freq ≥ cutoff
     tail_set = {
         w
         for w, _ in ranked
@@ -118,11 +117,11 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
            or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
-    # 9) primary list: everything except those in tail_set
+    # 9) primary: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail list: only those demoted by rule
-    tail    = [w for w, _ in ranked if w in tail_set]
+    # 10) tail: the demoted short/high-frequency words
+    tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
     ordered = primary + tail
