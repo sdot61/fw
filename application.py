@@ -81,15 +81,12 @@ def find_matches(query, vocab, phonetic_buckets, max_results=100):
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # phonetic (DoubleMetaphone)
-    codes = set(jellyfish.doublemetaphone(q))
-    for code in codes:
-        for w in phonetic_buckets.get(code, []):
-            w_code = jellyfish.doublemetaphone(w)[0]
-            mdist = Levenshtein.distance(code, w_code)
-            if mdist <= 1:
-                phon_score = 80 - (mdist * 20)
-                scores[w] = max(scores.get(w, 0), phon_score)
+    # phonetic match via Metaphone
+    qc = jellyfish.metaphone(q)
+    for w in phonetic_buckets.get(qc, []):
+        # boost same‐sound words to a high score
+        scores[w] = max(scores.get(w, 0), 80)
+
 
     # sort by score desc, return just the words
     return [w for w,_ in sorted(scores.items(), key=lambda kv: -kv[1])[:max_results]]
