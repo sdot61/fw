@@ -4,7 +4,7 @@ import string
 from flask import Flask, request, jsonify, render_template
 from rapidfuzz import process, fuzz
 import Levenshtein
-from jellyfish import double_metaphone
+from doublemetaphone import doublemetaphone
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -34,7 +34,7 @@ for lineno, line in enumerate(lines):
 # Build phonetic buckets using Double Metaphone (primary + secondary)
 phonetic_buckets = {}
 for w in vocab:
-    primary, secondary = double_metaphone(w)
+    primary, secondary = doublemetaphone(w)
     for code in (primary, secondary):
         if code:
             phonetic_buckets.setdefault(code, []).append(w)
@@ -49,30 +49,25 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
+
 def find_matches(query, vocab, phonetic_buckets, max_results=100):
     q = query.lower()
     scores = {}
 
-    # … [all your scoring logic stays the same] …
+    # 1) substring boost
+    for w in vocab:
+        if q in w:
+            scores[w] = max(scores.get(w, 0), 100)
 
-    # 6) phonetic match via Double Metaphone
-    pcode, scode = double_metaphone(q)
-    for code in (pcode, scode):
-        if not code:
-            continue
-        for w in phonetic_buckets.get(code, []):
-            scores[w] = max(scores.get(w, 0), 80)
+    # 2) fuzzy token_sort_ratio
+    for w, score, _ in process.extract(q, vocab, scorer=fuzz.token_sort_ratio, limit=200):
+        if score >= 50:
+            scores[w] = max(scores.get(w, 0), score)
 
-    # sort all scored words descending
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-
-    # drop any word of length ≤ 2
-    filtered = [w for w, _ in ranked if len(w) > 2]
-
-    # return the top N
-    return filtered[:max_results]
-
-
+    # 3) fuzzy partial_ratio (for embedded matches)
+    for w, score, _ in process.extract(q, vocab, scorer=fuzz.partial_ratio, limit=200):
+        if score >= 50:
+            scores[w] = max(scores.get(w, 0), score)
 
     # 4) Levenshtein distance
     L_THRESH = 2 if len(q) <= 5 else 3
@@ -90,15 +85,19 @@ def find_matches(query, vocab, phonetic_buckets, max_results=100):
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
     # 6) phonetic match via Double Metaphone
-    pcode, scode = double_metaphone(q)
+    pcode, scode = doublemetaphone(q)
     for code in (pcode, scode):
         if not code:
             continue
         for w in phonetic_buckets.get(code, []):
             scores[w] = max(scores.get(w, 0), 80)
 
-    # sort by score desc, return just the words
-    return [w for w, _ in sorted(scores.items(), key=lambda kv: -kv[1])[:max_results]]
+    # rank by score descending
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    # drop any word of length ≤ 2
+    filtered = [w for w, _ in ranked if len(w) > 2]
+    # return top N
+    return filtered[:max_results]
 
 
 # --- Flask routes -----------------------------------------------
