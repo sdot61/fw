@@ -11,4 +11,5 @@ fuzzywuzzy==0.18.0
 python-Levenshtein==0.12.2
 rapidfuzz>=2.0.0            # fast, modern fuzzy matching
 jellyfish>=0.9.0            # phonetic algorithms (Metaphone)
+doublemetaphone>=0.1.7      # or whatever the current version is
 
