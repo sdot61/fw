@@ -7,7 +7,7 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any 1–3 letter word occurring ≥ this will be demoted
+High_Freq_Cutoff    = 6    # any 3-letter word occurring ≥ this will be demoted
 DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
@@ -52,47 +52,77 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS):
+def find_matches(query, vocab, phonetic_buckets,
+                 max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
     scores = {}
 
-    # … your existing substring, fuzzy, Levenshtein, bigram logic (1–5) …
+    # 1) substring boost (exact substring → 100)
+    for w in vocab:
+        if q in w:
+            scores[w] = max(scores.get(w, 0), 100)
 
-    # 6a) exact phonetic matches → boost to 100
+    # 2) fuzzy token_sort_ratio (≥50)
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.token_sort_ratio,
+                                       limit=200):
+        if score >= 50:
+            scores[w] = max(scores.get(w, 0), score)
+
+    # 3) fuzzy partial_ratio (≥50)
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.partial_ratio,
+                                       limit=200):
+        if score >= 50:
+            scores[w] = max(scores.get(w, 0), score)
+
+    # 3b) fuzzy token_set_ratio (≥60)
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.token_set_ratio,
+                                       limit=200):
+        if score >= 60:
+            scores[w] = max(scores.get(w, 0), score)
+
+    # 4) Levenshtein distance
+    L_THRESH = 2 if len(q) <= 5 else 3
+    for w in vocab:
+        if abs(len(w) - len(q)) <= L_THRESH:
+            d = Levenshtein.distance(q, w)
+            if d <= L_THRESH:
+                lev_score = 100 - (d * 10)
+                scores[w] = max(scores.get(w, 0), lev_score)
+
+    # 5) bigram overlap
+    for w in vocab:
+        ov = ngram_overlap(q, w)
+        if ov >= 0.5:
+            scores[w] = max(scores.get(w, 0), int(ov * 100))
+
+    # 6) phonetic match via Double Metaphone → boost to 100
     pcode, scode = doublemetaphone(q)
-    if pcode:
-        for w in phonetic_buckets.get(pcode, []):
+    for code in (pcode, scode):
+        if not code:
+            continue
+        for w in phonetic_buckets.get(code, []):
             scores[w] = max(scores.get(w, 0), 100)
-    if scode:
-        for w in phonetic_buckets.get(scode, []):
-            scores[w] = max(scores.get(w, 0), 100)
-
-    # 6b) soft phonetic matches (edit-distance ≤ 2) → boost to 90
-    for bucket_code, words in phonetic_buckets.items():
-        if pcode and Levenshtein.distance(pcode, bucket_code) <= 2:
-            for w in words:
-                scores[w] = max(scores.get(w, 0), 90)
-        elif scode and Levenshtein.distance(scode, bucket_code) <= 2:
-            for w in words:
-                scores[w] = max(scores.get(w, 0), 90)
 
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
     # 8) identify the “tail” words:
-    #    • All 1–2 letter words, plus
-    #    • 3-letter words with freq ≥ High_Freq_Cutoff
+    #    • All 1- or 2-letter words, plus
+    #    • All 3-letter words with freq ≥ High_Freq_Cutoff
     tail_set = {
         w
         for w, _ in ranked
         if len(w) <= 2
-           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
+           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
-    # 9) primary: everything except those in tail_set
+    # 9) primary list: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail: only those demoted by rule
+    # 10) tail list: only those demoted by rule
     tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
