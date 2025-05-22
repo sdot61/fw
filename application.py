@@ -50,7 +50,7 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets, max_results=500):
+def find_matches(query, vocab, phonetic_buckets, max_results=100):
     q = query.lower()
     scores = {}
 
@@ -60,12 +60,16 @@ def find_matches(query, vocab, phonetic_buckets, max_results=500):
             scores[w] = max(scores.get(w, 0), 100)
 
     # 2) fuzzy token_sort_ratio
-    for w, score, _ in process.extract(q, vocab, scorer=fuzz.token_sort_ratio, limit=200):
+    for w, score, _ in process.extract(q, vocab,
+                                        scorer=fuzz.token_sort_ratio,
+                                        limit=200):
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 3) fuzzy partial_ratio (for embedded matches)
-    for w, score, _ in process.extract(q, vocab, scorer=fuzz.partial_ratio, limit=200):
+    # 3) fuzzy partial_ratio (embedded matches)
+    for w, score, _ in process.extract(q, vocab,
+                                        scorer=fuzz.partial_ratio,
+                                        limit=200):
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
@@ -80,7 +84,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=500):
 
     # 5) bigram overlap
     for w in vocab:
-        ov = ngram_overlap(q, w, n=2)
+        ov = ngram_overlap(q, w)
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
@@ -92,19 +96,28 @@ def find_matches(query, vocab, phonetic_buckets, max_results=500):
         for w in phonetic_buckets.get(code, []):
             scores[w] = max(scores.get(w, 0), 80)
 
-    # rank all scored items descending by score
+    # rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-    # drop any word of length ≤ 2
+
+    # drop very short words
     filtered = [(w, sc) for w, sc in ranked if len(w) > 2]
-    # separate into >3 letters and exactly 3 letters
-    longer       = [w for w, sc in filtered if len(w) > 3]
-    three_letter = [w for w, sc in filtered if len(w) == 3]
-    # within 3-letter group, split high-frequency (positions >10) 
-    low_freq_short  = [w for w in three_letter if len(positions.get(w, [])) <= 10]
-    high_freq_short = [w for w in three_letter if len(positions.get(w, [])) > 10]
-    # concatenate: longer first, then low-frequency 3-letter, then high-frequency 3-letter
-    ordered = longer + low_freq_short + high_freq_short
-    # return top max_results
+
+    # identify high-frequency 3-letter words
+    high_freq_3 = {
+        w
+        for w, _ in filtered
+        if len(w) == 3 and len(positions.get(w, [])) > 10
+    }
+
+    # all others in original score order
+    primary = [w for w, _ in filtered if w not in high_freq_3]
+
+    # high-frequency 3-letter words at the very end
+    tail = [w for w, _ in filtered if w in high_freq_3]
+
+    # final ordering
+    ordered = primary + tail
+
     return ordered[:max_results]
 
 
@@ -117,13 +130,13 @@ def index():
         if not search_word:
             return render_template("index.html", match=[], search_word="")
 
-        matches = find_matches(search_word, vocab, phonetic_buckets)
-        out = [
-            {"match": w, "positions": positions.get(w, [])}
-            for w in matches
-        ]
+        matches = find_matches(search_word, vocab, phonetic_buckets,
+                               max_results=100)
+        out = [{"match": w, "positions": positions.get(w, [])}
+               for w in matches]
 
-        return render_template("index.html", match=out, search_word=search_word)
+        return render_template("index.html", match=out,
+                               search_word=search_word)
 
     return render_template("index.html", match=[], search_word="")
 
@@ -135,11 +148,9 @@ def search_api():
     if not q:
         return jsonify([])
 
-    matches = find_matches(q, vocab, phonetic_buckets)
-    out = [
-        {"match": w, "positions": positions.get(w, [])}
-        for w in matches
-    ]
+    matches = find_matches(q, vocab, phonetic_buckets, max_results=100)
+    out = [{"match": w, "positions": positions.get(w, [])}
+           for w in matches]
     return jsonify(out)
 
 
