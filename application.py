@@ -109,12 +109,12 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
     # 8) identify the “tail” words:
-    #    • All 2-letter words, plus
+    #    • All 1- or 2-letter words, plus
     #    • 3-letter words with freq ≥ High_Freq_Cutoff
     tail_set = {
         w
         for w, _ in ranked
-        if len(w) == 2
+        if len(w) <= 2
            or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
