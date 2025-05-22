@@ -7,6 +7,7 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
+High_Freq_Cutoff    = 6    # any 3-letter word occurring ≥ this will be demoted
 DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
@@ -62,16 +63,23 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
 
     # 2) fuzzy token_sort_ratio (≥50)
     for w, score, _ in process.extract(q, vocab,
-                                        scorer=fuzz.token_sort_ratio,
-                                        limit=200):
+                                       scorer=fuzz.token_sort_ratio,
+                                       limit=200):
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
     # 3) fuzzy partial_ratio (≥50)
     for w, score, _ in process.extract(q, vocab,
-                                        scorer=fuzz.partial_ratio,
-                                        limit=200):
+                                       scorer=fuzz.partial_ratio,
+                                       limit=200):
         if score >= 50:
+            scores[w] = max(scores.get(w, 0), score)
+
+    # 3b) fuzzy token_set_ratio (≥60)
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.token_set_ratio,
+                                       limit=200):
+        if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
     # 4) Levenshtein distance
@@ -100,16 +108,23 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) demote all 2-letter words to the tail
-    tail_set = {w for w, _ in ranked if len(w) == 2}
+    # 8) identify the “tail” words:
+    #    • All 2-letter words, plus
+    #    • 3-letter words with freq ≥ High_Freq_Cutoff
+    tail_set = {
+        w
+        for w, _ in ranked
+        if len(w) == 2
+           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
+    }
 
-    # 9) primary list: everything except two-letter words
+    # 9) primary list: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail list: only the two-letter words
-    tail = [w for w, _ in ranked if w in tail_set]
+    # 10) tail list: only those demoted by rule
+    tail    = [w for w, _ in ranked if w in tail_set]
 
-    # 11) final ordering and cap
+    # 11) final ordering + cap
     ordered = primary + tail
     return ordered[:max_results]
 
