@@ -7,19 +7,18 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any word ≤ 3 letters occurring ≥ this goes to bottom
-DEFAULT_MAX_RESULTS = 700  # cap on total results
+DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # off in prod
+app.config["DEBUG"] = False  # turn off in prod
 
 # --- Pre-load the text & build indexes -------------------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
-positions = {}  # word → list of { line, word }
+positions = {}  # word_lower → [ { line: int, word: original } ]
 word_re = re.compile(r"\b[\w'-]+\b")
 
 for lineno, line in enumerate(lines):
@@ -27,11 +26,14 @@ for lineno, line in enumerate(lines):
         stripped = raw.strip(string.punctuation)
         if not stripped:
             continue
-        w = stripped.lower()
-        vocab.add(w)
-        positions.setdefault(w, []).append({"word": raw, "line": lineno})
+        lower = stripped.lower()
+        vocab.add(lower)
+        positions.setdefault(lower, []).append({
+            "word": raw,
+            "line": lineno
+        })
 
-# phonetic buckets via Double Metaphone
+# Build phonetic buckets using Double Metaphone (primary + secondary)
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -49,35 +51,27 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets,
-                 max_results=DEFAULT_MAX_RESULTS):
+def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
     scores = {}
 
-    # 1) substring boost (exact substring → 100)
+    # 1) substring boost
     for w in vocab:
         if q in w:
             scores[w] = max(scores.get(w, 0), 100)
 
-    # 2) fuzzy token_sort_ratio (looser: ≥50)
+    # 2) fuzzy token_sort_ratio (≥50)
     for w, score, _ in process.extract(q, vocab,
                                         scorer=fuzz.token_sort_ratio,
                                         limit=200):
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 3) fuzzy partial_ratio (looser: ≥50)
+    # 3) fuzzy partial_ratio (≥50)
     for w, score, _ in process.extract(q, vocab,
                                         scorer=fuzz.partial_ratio,
                                         limit=200):
         if score >= 50:
-            scores[w] = max(scores.get(w, 0), score)
-
-    # 3b) fuzzy token_set_ratio (good for substring-ish matches)
-    for w, score, _ in process.extract(q, vocab,
-                                        scorer=fuzz.token_set_ratio,
-                                        limit=200):
-        if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
     # 4) Levenshtein distance
@@ -95,7 +89,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # 6) phonetic via Double Metaphone → boost to 100
+    # 6) phonetic match via Double Metaphone → boost to 100
     pcode, scode = doublemetaphone(q)
     for code in (pcode, scode):
         if not code:
@@ -103,22 +97,19 @@ def find_matches(query, vocab, phonetic_buckets,
         for w in phonetic_buckets.get(code, []):
             scores[w] = max(scores.get(w, 0), 100)
 
-    # 7) sort by score desc
+    # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) build tail_set of any word ≤3 letters with freq ≥ cutoff
-    tail_set = {
-        w for w, _ in ranked
-        if len(w) <= 3 and len(positions.get(w, [])) >= High_Freq_Cutoff
-    }
+    # 8) demote all 2-letter words to the tail
+    tail_set = {w for w, _ in ranked if len(w) == 2}
 
-    # 9) primary: all others, in score order
+    # 9) primary list: everything except two-letter words
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail: the demoted short words
+    # 10) tail list: only the two-letter words
     tail = [w for w, _ in ranked if w in tail_set]
 
-    # 11) final list + cap
+    # 11) final ordering and cap
     ordered = primary + tail
     return ordered[:max_results]
 
