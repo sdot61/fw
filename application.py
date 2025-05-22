@@ -7,8 +7,8 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any 3-letter word occurring ≥ this will be demoted
-DEFAULT_MAX_RESULTS = 700  # cap on number of results
+High_Freq_Cutoff    = 6    # any 1–3 letter word occurring ≥ this will be demoted
+DEFAULT_MAX_RESULTS = 700  # cap on total results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -19,7 +19,7 @@ with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
-positions = {}  # word_lower → [ { line: int, word: original } ]
+positions = {}  # word → list of { line, original word }
 word_re = re.compile(r"\b[\w'-]+\b")
 
 for lineno, line in enumerate(lines):
@@ -27,14 +27,14 @@ for lineno, line in enumerate(lines):
         stripped = raw.strip(string.punctuation)
         if not stripped:
             continue
-        lower = stripped.lower()
-        vocab.add(lower)
-        positions.setdefault(lower, []).append({
+        w = stripped.lower()
+        vocab.add(w)
+        positions.setdefault(w, []).append({
             "word": raw,
             "line": lineno
         })
 
-# Build phonetic buckets using Double Metaphone (primary + secondary)
+# Build phonetic buckets via Double Metaphone
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -43,7 +43,6 @@ for w in vocab:
             phonetic_buckets.setdefault(code, []).append(w)
 
 
-# --- Matching utility -----------------------------------------
 def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
     b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
@@ -55,11 +54,15 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
+    # clean out punctuation for substring matching
+    q_clean = re.sub(r"[^a-z0-9]", "", q)
+
     scores = {}
 
-    # 1) substring boost (exact substring → 100)
+    # 1) substring boost on both raw and cleaned
     for w in vocab:
-        if q in w:
+        w_clean = re.sub(r"[^a-z0-9]", "", w)
+        if q in w or q_clean in w_clean:
             scores[w] = max(scores.get(w, 0), 100)
 
     # 2) fuzzy token_sort_ratio (≥50)
@@ -98,31 +101,28 @@ def find_matches(query, vocab, phonetic_buckets,
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # 6) phonetic match via Double Metaphone → boost to 100
-    pcode, scode = doublemetaphone(q)
+    # 6) exact phonetic match → boost to 100
+    pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
-        if not code:
-            continue
-        for w in phonetic_buckets.get(code, []):
-            scores[w] = max(scores.get(w, 0), 100)
+        if code:
+            for w in phonetic_buckets.get(code, []):
+                scores[w] = max(scores.get(w, 0), 100)
 
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) identify the “tail” words:
-    #    • All 1- or 2-letter words, plus
-    #    • All 3-letter words with freq ≥ High_Freq_Cutoff
+    # 8) demote all 1–2 letter words, and any 3-letter word ≥ cutoff
     tail_set = {
         w
         for w, _ in ranked
         if len(w) <= 2
-           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
+           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
 
-    # 9) primary list: everything except those in tail_set
+    # 9) primary = everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail list: only those demoted by rule
+    # 10) tail = those demoted
     tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
@@ -137,7 +137,6 @@ def index():
         q = request.form.get("searchWord", "").strip().lower()
         if not q:
             return render_template("index.html", match=[], search_word="")
-
         matches = find_matches(q, vocab, phonetic_buckets)
         out = [{"match": w, "positions": positions[w]} for w in matches]
         return render_template("index.html", match=out, search_word=q)
