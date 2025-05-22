@@ -65,12 +65,12 @@ def find_matches(query, vocab, phonetic_buckets,
         if q in w or q_clean in w_clean:
             scores[w] = max(scores.get(w, 0), 100)
     #1b) fuzzy token_sort_ratio on cleaned strings to catch typos
-+    for w in vocab:
-+        w_clean = re.sub(r"[^a-z0-9]", "", w)
-+        # compare cleaned query to cleaned word
-+        score = fuzz.token_sort_ratio(q_clean, w_clean)
-+        if score >= 60:
-+            scores[w] = max(scores.get(w, 0), score)
+   for w in vocab:
+       w_clean = re.sub(r"[^a-z0-9]", "", w)
+       # compare cleaned query to cleaned word
+       score = fuzz.token_sort_ratio(q_clean, w_clean)
+       if score >= 60:
+           scores[w] = max(scores.get(w, 0), score)
 
     # 2) fuzzy token_sort_ratio (≥50)
     for w, score, _ in process.extract(q, vocab,
