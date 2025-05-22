@@ -56,71 +56,43 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
     q = query.lower()
     scores = {}
 
-    # 1) substring boost
-    for w in vocab:
-        if q in w:
+    # … your existing substring, fuzzy, Levenshtein, bigram logic (1–5) …
+
+    # 6a) exact phonetic matches → boost to 100
+    pcode, scode = doublemetaphone(q)
+    if pcode:
+        for w in phonetic_buckets.get(pcode, []):
+            scores[w] = max(scores.get(w, 0), 100)
+    if scode:
+        for w in phonetic_buckets.get(scode, []):
             scores[w] = max(scores.get(w, 0), 100)
 
-    # 2) fuzzy token_sort_ratio (≥50)
-    for w, score, _ in process.extract(q, vocab,
-                                       scorer=fuzz.token_sort_ratio,
-                                       limit=200):
-        if score >= 50:
-            scores[w] = max(scores.get(w, 0), score)
-
-    # 3) fuzzy partial_ratio (≥50)
-    for w, score, _ in process.extract(q, vocab,
-                                       scorer=fuzz.partial_ratio,
-                                       limit=200):
-        if score >= 50:
-            scores[w] = max(scores.get(w, 0), score)
-
-    # 3b) token_set_ratio (≥60)
-    for w, score, _ in process.extract(q, vocab,
-                                       scorer=fuzz.token_set_ratio,
-                                       limit=200):
-        if score >= 60:
-            scores[w] = max(scores.get(w, 0), score)
-
-    # 4) Levenshtein distance
-    L_THRESH = 2 if len(q) <= 5 else 3
-    for w in vocab:
-        if abs(len(w) - len(q)) <= L_THRESH:
-            d = Levenshtein.distance(q, w)
-            if d <= L_THRESH:
-                lev_score = 100 - (d * 10)
-                scores[w] = max(scores.get(w, 0), lev_score)
-
-    # 5) bigram overlap
-    for w in vocab:
-        ov = ngram_overlap(q, w)
-        if ov >= 0.5:
-            scores[w] = max(scores.get(w, 0), int(ov * 100))
-
-    # 6) phonetic soft match via Double Metaphone
-    pcode, scode = doublemetaphone(q)
+    # 6b) soft phonetic matches (edit-distance ≤ 2) → boost to 90
     for bucket_code, words in phonetic_buckets.items():
-        # include any bucket whose code is within edit-distance 1 of either query code
-        if (pcode and Levenshtein.distance(pcode, bucket_code) <= 1) or \
-           (scode and Levenshtein.distance(scode, bucket_code) <= 1):
+        if pcode and Levenshtein.distance(pcode, bucket_code) <= 2:
+            for w in words:
+                scores[w] = max(scores.get(w, 0), 90)
+        elif scode and Levenshtein.distance(scode, bucket_code) <= 2:
             for w in words:
                 scores[w] = max(scores.get(w, 0), 90)
 
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) identify “tail” words: any 1–2 letter word OR 3-letter words with freq ≥ cutoff
+    # 8) identify the “tail” words:
+    #    • All 1–2 letter words, plus
+    #    • 3-letter words with freq ≥ High_Freq_Cutoff
     tail_set = {
         w
         for w, _ in ranked
         if len(w) <= 2
-           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
+           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
 
     # 9) primary: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail: the demoted short/high-frequency words
+    # 10) tail: only those demoted by rule
     tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
