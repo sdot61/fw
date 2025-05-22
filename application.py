@@ -63,14 +63,14 @@ def find_matches(query, vocab, phonetic_buckets, max_results=700):
     for w, score, _ in process.extract(q, vocab,
                                         scorer=fuzz.token_sort_ratio,
                                         limit=200):
-        if score >= 50:
+        if score >= 70:
             scores[w] = max(scores.get(w, 0), score)
 
     # 3) fuzzy partial_ratio (embedded matches)
     for w, score, _ in process.extract(q, vocab,
                                         scorer=fuzz.partial_ratio,
                                         limit=200):
-        if score >= 50:
+        if score >= 70:
             scores[w] = max(scores.get(w, 0), score)
 
     # 4) Levenshtein distance
@@ -94,7 +94,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=700):
         if not code:
             continue
         for w in phonetic_buckets.get(code, []):
-            scores[w] = max(scores.get(w, 0), 80)
+            scores[w] = max(scores.get(w, 0), 90)
 
     # rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
