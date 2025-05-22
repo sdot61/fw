@@ -7,15 +7,14 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any word ≤3 letters occurring > this will be pushed to the bottom
-Max_Results = 700  # default cap on number of results
+High_Freq_Cutoff    = 6    # any 3-letter word occurring > this goes to the bottom
+DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["DEBUG"] = False  # turn off in prod
 
 # --- Pre-load the text & build indexes -------------------------
-
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
@@ -45,7 +44,6 @@ for w in vocab:
 
 
 # --- Matching utility -----------------------------------------
-
 def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
     b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
@@ -54,7 +52,7 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets, max_results=Max_Results):
+def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
     scores = {}
 
@@ -70,7 +68,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=Max_Results):
         if score >= 70:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 3) fuzzy partial_ratio (embedded matches)
+    # 3) fuzzy partial_ratio
     for w, score, _ in process.extract(q, vocab,
                                         scorer=fuzz.partial_ratio,
                                         limit=200):
@@ -98,24 +96,25 @@ def find_matches(query, vocab, phonetic_buckets, max_results=Max_Results):
         if not code:
             continue
         for w in phonetic_buckets.get(code, []):
-            # boost all phonetic matches to top
             scores[w] = max(scores.get(w, 0), 100)
 
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) identify high-frequency words of length ≤ 3
-    high_freq = {
+    # 8) identify all "tail" words:
+    #    - any word of length ≤ 2, or
+    #    - any word of length == 3 with freq > High_Freq_Cutoff
+    tail_set = {
         w
         for w, _ in ranked
-        if len(w) <= 3 and len(positions.get(w, [])) > High_Freq_Cutoff
+        if len(w) <= 2 or (len(w) == 3 and len(positions.get(w, [])) > High_Freq_Cutoff)
     }
 
-    # 9) primary list: everything except those over-common short words
-    primary = [w for w, _ in ranked if w not in high_freq]
+    # 9) primary list: everything else, in score order:
+    primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail: only the over-common short words
-    tail = [w for w, _ in ranked if w in high_freq]
+    # 10) tail list: all the over-short or over-common 3-letter words
+    tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
     ordered = primary + tail
@@ -123,7 +122,6 @@ def find_matches(query, vocab, phonetic_buckets, max_results=Max_Results):
 
 
 # --- Flask routes -----------------------------------------------
-
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
