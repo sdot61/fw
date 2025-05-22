@@ -50,7 +50,7 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets, max_results=300):
+def find_matches(query, vocab, phonetic_buckets, max_results=500):
     q = query.lower()
     scores = {}
 
@@ -97,10 +97,13 @@ def find_matches(query, vocab, phonetic_buckets, max_results=300):
     # drop any word of length ≤ 2
     filtered = [(w, sc) for w, sc in ranked if len(w) > 2]
     # separate into >3 letters and exactly 3 letters
-    longer      = [w for w, sc in filtered if len(w) > 3]
+    longer       = [w for w, sc in filtered if len(w) > 3]
     three_letter = [w for w, sc in filtered if len(w) == 3]
-    # concatenate so 3-letter words come after longer ones
-    ordered = longer + three_letter
+    # within 3-letter group, split high-frequency (positions >10) 
+    low_freq_short  = [w for w in three_letter if len(positions.get(w, [])) <= 10]
+    high_freq_short = [w for w in three_letter if len(positions.get(w, [])) > 10]
+    # concatenate: longer first, then low-frequency 3-letter, then high-frequency 3-letter
+    ordered = longer + low_freq_short + high_freq_short
     # return top max_results
     return ordered[:max_results]
 
