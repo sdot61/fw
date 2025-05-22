@@ -130,8 +130,7 @@ def index():
         if not search_word:
             return render_template("index.html", match=[], search_word="")
 
-        matches = find_matches(search_word, vocab, phonetic_buckets,
-                               max_results=100)
+        matches = find_matches(search_word, vocab, phonetic_buckets)
         out = [{"match": w, "positions": positions.get(w, [])}
                for w in matches]
 
@@ -148,7 +147,7 @@ def search_api():
     if not q:
         return jsonify([])
 
-    matches = find_matches(q, vocab, phonetic_buckets, max_results=100)
+    matches = find_matches(q, vocab, phonetic_buckets)
     out = [{"match": w, "positions": positions.get(w, [])}
            for w in matches]
     return jsonify(out)
