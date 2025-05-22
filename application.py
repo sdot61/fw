@@ -50,7 +50,7 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 
-def find_matches(query, vocab, phonetic_buckets, max_results=100):
+def find_matches(query, vocab, phonetic_buckets, max_results=700):
     q = query.lower()
     scores = {}
 
@@ -106,7 +106,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=100):
     high_freq_3 = {
         w
         for w, _ in filtered
-        if len(w) == 3 and len(positions.get(w, [])) > 10
+        if len(w) == 3 and len(positions.get(w, [])) > 7
     }
 
     # all others in original score order
