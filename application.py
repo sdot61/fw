@@ -107,7 +107,7 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
     tail_set = {
         w
         for w, _ in ranked
-        if len(w) <= 2 or (len(w) == 3 and len(positions.get(w, [])) > High_Freq_Cutoff)
+        if len(w) <= 2 or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
     # 9) primary list: everything else, in score order:
