@@ -7,7 +7,7 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6    # any 3-letter word occurring > this goes to the bottom
+High_Freq_Cutoff    = 6    # any word ≤ 3 letters occurring ≥ this will be pushed to the bottom
 DEFAULT_MAX_RESULTS = 700  # cap on number of results
 
 app = Flask(__name__)
@@ -101,19 +101,17 @@ def find_matches(query, vocab, phonetic_buckets, max_results=DEFAULT_MAX_RESULTS
     # 7) rank by score descending
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
 
-    # 8) identify all "tail" words:
-    #    - any word of length ≤ 2, or
-    #    - any word of length == 3 with freq > High_Freq_Cutoff
+    # 8) identify over-common short words (≤3 letters with freq ≥ cutoff)
     tail_set = {
         w
         for w, _ in ranked
-        if len(w) <= 2 or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
+        if len(w) <= 3 and len(positions.get(w, [])) >= High_Freq_Cutoff
     }
 
-    # 9) primary list: everything else, in score order:
+    # 9) primary list: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 10) tail list: all the over-short or over-common 3-letter words
+    # 10) tail list: only the demoted short words
     tail = [w for w, _ in ranked if w in tail_set]
 
     # 11) final ordering + cap
