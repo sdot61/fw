@@ -114,7 +114,7 @@ def index():
         if not search_word:
             return render_template("index.html", match=[], search_word="")
 
-        matches = find_matches(search_word, vocab, phonetic_buckets, max_results=50)
+        matches = find_matches(search_word, vocab, phonetic_buckets, max_results=100)
         out = [
             {"match": w, "positions": positions.get(w, [])}
             for w in matches
