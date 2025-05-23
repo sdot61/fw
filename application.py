@@ -124,4 +124,7 @@ def search_api():
 
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
-    return render_template("fin_
+    return render_template("finneganswake.html", lines=enumerate(lines))
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
