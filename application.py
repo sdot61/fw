@@ -8,8 +8,8 @@ import jellyfish
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
-High_Freq_Cutoff    = 6     # demote 3-letter words occurring ≥ this
-DEFAULT_MAX_RESULTS = 700   # cap on number of results
+High_Freq_Cutoff    = 6     # demote very common 3-letter words
+DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
@@ -21,7 +21,7 @@ with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
-positions = {}
+positions = {}  # word → list of {word, line}
 word_re = re.compile(r"\b[\w'-]+\b")
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
@@ -40,7 +40,7 @@ for w in vocab:
         if code:
             phonetic_buckets.setdefault(code, []).append(w)
 
-# --- n-gram overlap helper ----------------
+# --- n-gram overlap helper -----------------
 def ngram_overlap(a: str, b: str, n: int = 3) -> float:
     a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
     b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
@@ -53,111 +53,141 @@ def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower().strip()
     q_clean = re.sub(r"[^a-z0-9]", "", q)
-    scores = {}
-
-    def boost(w, sc):
-        scores[w] = max(scores.get(w, 0), sc)
+    if not q_clean:
+        return []
 
     # precompute cleaned vocab forms
     cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
 
-    # STEP 1: cleaned-substring boost → 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            if q_clean in w_cl:
-                boost(w, 100)
+    # 1) literal-exact bypass: any w with cleaned[w]==q_clean
+    #    sorted by first appearance in text
+    exact = [
+        w for w, w_cl in cleaned.items()
+        if w_cl == q_clean
+    ]
+    exact.sort(key=lambda w: min(p["line"] for p in positions[w]))
 
-    # STEP 2: light prefix bump → +10 if already matched
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            if scores.get(w, 0) > 0 and w_cl.startswith(q_clean):
-                scores[w] += 10
+    # 2) Build scores for everything else
+    scores = {}
+    def boost(w, sc):
+        scores[w] = max(scores.get(w, 0), sc)
 
-    # STEP 3: cleaned Jaro–Winkler ≥ 0.80 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
-            if jw >= 0.80:
-                boost(w, int(jw * 100))
+    # A) substring boost → 100
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        if q_clean in w_cl:
+            boost(w, 100)
 
-    # STEP 4: cleaned trigram-overlap ≥ 0.6 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            ov = ngram_overlap(q_clean, w_cl, n=3)
-            if ov >= 0.6:
-                boost(w, int(ov * 100))
+    # B) prefix bump → +10 if already substring-matched
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        if scores.get(w, 0) > 0 and w_cl.startswith(q_clean):
+            scores[w] += 10
 
-    # STEP 5: cleaned fuzzy token_set_ratio ≥ 70 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            ts = fuzz.token_set_ratio(q_clean, w_cl)
-            if ts >= 70:
-                boost(w, ts)
+    # C) Jaro–Winkler ≥ .80 → up to 100
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
+        if jw >= 0.80:
+            boost(w, int(jw * 100))
 
-    # STEP 6: cleaned fuzzy partial_ratio ≥ 70 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            pr = fuzz.partial_ratio(q_clean, w_cl)
-            if pr >= 70:
-                boost(w, pr)
+    # D) trigram-overlap ≥ .6 → up to 100
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        ov = ngram_overlap(q_clean, w_cl, n=3)
+        if ov >= 0.6:
+            boost(w, int(ov * 100))
 
-    # STEP 7: raw fuzzy token_sort_ratio ≥ 60
-    for w, sc, _ in process.extract(q, vocab,
-                                     scorer=fuzz.token_sort_ratio,
-                                     limit=200):
+    # E) fuzzy token_set_ratio ≥ 70 → up to 100
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        ts = fuzz.token_set_ratio(q_clean, w_cl)
+        if ts >= 70:
+            boost(w, ts)
+
+    # F) fuzzy partial_ratio ≥ 70 → up to 100
+    for w, w_cl in cleaned.items():
+        if w in exact:
+            continue
+        pr = fuzz.partial_ratio(q_clean, w_cl)
+        if pr >= 70:
+            boost(w, pr)
+
+    # G) raw token_sort_ratio ≥ 60 → up to 100
+    for w, sc, _ in process.extract(
+        q, vocab, scorer=fuzz.token_sort_ratio, limit=200
+    ):
+        if w in exact:
+            continue
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 8: raw fuzzy partial_ratio ≥ 60
-    for w, sc, _ in process.extract(q, vocab,
-                                     scorer=fuzz.partial_ratio,
-                                     limit=200):
+    # H) raw partial_ratio ≥ 60 → up to 100
+    for w, sc, _ in process.extract(
+        q, vocab, scorer=fuzz.partial_ratio, limit=200
+    ):
+        if w in exact:
+            continue
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 9: Levenshtein distance (≤2 edits short, ≤3 long)
-    thresh = 2 if len(q) <= 5 else 3
+    # I) Levenshtein distance → up to 100
+    thresh = 2 if len(q_clean) <= 5 else 3
     for w in vocab:
+        if w in exact:
+            continue
         if abs(len(w) - len(q)) <= thresh:
             d = Levenshtein.distance(q, w)
             if d <= thresh:
-                boost(w, 100 - (d * 10))
+                boost(w, 100 - d * 10)
 
-    # STEP 10: exact Double-Metaphone → 95
+    # J) exact Double-Metaphone → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
-        if code:
-            for w in phonetic_buckets.get(code, []):
+        if not code:
+            continue
+        for w in phonetic_buckets.get(code, []):
+            if w not in exact:
                 boost(w, 95)
 
-    # --- Short-word penalty (length ≤ 4, not exact match) ---
-    # heavier penalty for shorter words
+    # K) short-word penalty (len ≤4, non-exact)
     for w in list(scores):
-        L = len(w)
-        if q_clean and L <= 4 and cleaned[w] != q_clean:
-            # 4→10pt, 3→20pt, 2→30pt
-            penalty = (5 - L) * 10
-            scores[w] = max(0, scores[w] - penalty)
+        if cleaned[w] != q_clean:
+            L = len(w)
+            if L <= 4:
+                penalty = (5 - L) * 10  # 4→10,3→20,2→30,1→40
+                scores[w] = max(0, scores[w] - penalty)
 
-    # --- Final sort: by score desc, then length desc ---
-    ranked = sorted(scores.items(),
-                    key=lambda kv: (-kv[1], -len(kv[0])))
+    # L) sort by (score DESC, length DESC)
+    ranked = sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], -len(kv[0]))
+    )
 
-    # DEMOTION: only 1–2 letters and over-common 3-letter words
-    tail_set = {
+    # M) tail-demotion: 1–2 letters or over-common 3s
+    tail = {
         w for w, _ in ranked
         if len(w) <= 2
            or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
-    primary = [w for w, _ in ranked if w not in tail_set]
-    tail    = [w for w, _ in ranked if w in tail_set]
-    ordered = primary + tail
+    primary = [w for w, _ in ranked if w not in tail]
+    tail_list = [w for w, _ in ranked if w in tail]
+    scored_results = primary + tail_list
 
-    # FILTER OUT single-letter tokens (unless query is single-letter)
+    # N) final filter: drop single-letter & non-ASCII (if multi-char query)
+    combined = exact + scored_results
     if len(q_clean) > 1:
-        ordered = [w for w in ordered if len(cleaned[w]) > 1]
+        combined = [
+            w for w in combined
+            if len(cleaned[w]) > 1 and w.isascii()
+        ]
 
-    return ordered[:max_results]
+    return combined[:max_results]
 
 # --- Flask routes ---------------------------
 @app.route("/", methods=["GET", "POST"])
