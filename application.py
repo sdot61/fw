@@ -52,8 +52,12 @@ def find_matches(query, vocab, phonetic_buckets,
     def boost(w, score):
         scores[w] = max(scores.get(w, 0), score)
 
-    # STEP 1: exact, prefix, or substring match
+    valid_char_re = re.compile(r"^[a-zA-Z0-9'\"-]+$")
+
+    # STEP 1: exact or substring match
     for w in vocab:
+        if not valid_char_re.match(w):
+            continue
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         if q_clean == w_clean:
             boost(w, 100)
@@ -64,39 +68,47 @@ def find_matches(query, vocab, phonetic_buckets,
         elif w_clean in q_clean:
             boost(w, 85)
 
-    # STEP 2: phonetic match
+    # STEP 2: phonetic matches
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
-                boost(w, 95)
+                if valid_char_re.match(w):
+                    boost(w, 95)
 
-    # STEP 3: fuzzy match
+    # STEP 3: fuzzy cleaned match
     for w in vocab:
+        if not valid_char_re.match(w):
+            continue
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         ts = fuzz.token_sort_ratio(q_clean, w_clean)
         pr = fuzz.partial_ratio(q_clean, w_clean)
-        if ts >= 70:
+        if ts >= 75:
             boost(w, ts)
-        if pr >= 70:
+        if pr >= 75:
             boost(w, pr)
 
+    # STEP 4: fuzzy raw match
     for scorer in [fuzz.token_sort_ratio, fuzz.partial_ratio]:
         for w, sc, _ in process.extract(q, vocab, scorer=scorer, limit=200):
-            if sc >= 60:
+            if valid_char_re.match(w) and sc >= 75:
                 boost(w, sc)
 
-    # STEP 4: Levenshtein distance
+    # STEP 5: Levenshtein similarity
     L_THRESH = 2 if len(q) <= 5 else 3
     for w in vocab:
+        if not valid_char_re.match(w):
+            continue
         if abs(len(w) - len(q)) <= L_THRESH:
             d = Levenshtein.distance(q, w)
             if d <= L_THRESH:
                 boost(w, 90 - 10 * d)
 
-    # STEP 5: filter out irrelevant short words
-    final = [(w, s) for w, s in scores.items()
-             if len(w) > 2 or s >= 90]
+    # STEP 6: Demotion of short low-scoring words
+    final = [
+        (w, s) for w, s in scores.items()
+        if (len(w) > 3 or s >= 90)
+    ]
 
     ranked = sorted(final, key=lambda kv: -kv[1])
     return [w for w, _ in ranked][:max_results]
