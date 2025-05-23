@@ -42,25 +42,6 @@ for w in vocab:
         if code:
             phonetic_buckets.setdefault(code, []).append(w)
 
-# --- Utility Functions --------------------------------------
-def ngram_overlap(a: str, b: str, n: int = 2) -> float:
-    a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
-    b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
-    if not a_grams or not b_grams:
-        return 0.0
-    return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
-
-def syllabic_overlap(query: str, word: str) -> float:
-    query_chunks = re.findall(r"[aeiouy]+[^aeiouy\s]*", query.lower())
-    word_chunks = re.findall(r"[aeiouy]+[^aeiouy\s]*", word.lower())
-    if not query_chunks or not word_chunks:
-        return 0.0
-    return len(set(query_chunks) & set(word_chunks)) / len(query_chunks)
-
-def length_penalty(word: str, base_score: float) -> float:
-    len_score = max(0.7, min(1.0, 8.0 / max(len(word), 1)))
-    return base_score * len_score
-
 # --- Core matching function -------------------------------
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
@@ -68,23 +49,29 @@ def find_matches(query, vocab, phonetic_buckets,
     q_clean = re.sub(r"[^a-z0-9]", "", q)
     scores = {}
 
-    def boost(w, raw_score):
-        score = length_penalty(w, raw_score)
+    def boost(w, score):
         scores[w] = max(scores.get(w, 0), score)
 
-    # STEP 1: cleaned-prefix boost → 100
-    prefix_len = min(4, len(q_clean))
-    if prefix_len > 0:
-        for w in vocab:
-            if re.sub(r"[^a-z0-9]", "", w).startswith(q_clean[:prefix_len]):
-                boost(w, 100)
-
-    # STEP 2: substring match → 95
+    # STEP 1: exact, prefix, or substring match
     for w in vocab:
-        if q_clean in re.sub(r"[^a-z0-9]", "", w):
+        w_clean = re.sub(r"[^a-z0-9]", "", w)
+        if q_clean == w_clean:
+            boost(w, 100)
+        elif w_clean.startswith(q_clean):
             boost(w, 95)
+        elif q_clean in w_clean:
+            boost(w, 90)
+        elif w_clean in q_clean:
+            boost(w, 85)
 
-    # STEP 3: fuzzy cleaned matches
+    # STEP 2: phonetic match
+    pcode, scode = doublemetaphone(q_clean)
+    for code in (pcode, scode):
+        if code:
+            for w in phonetic_buckets.get(code, []):
+                boost(w, 95)
+
+    # STEP 3: fuzzy match
     for w in vocab:
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         ts = fuzz.token_sort_ratio(q_clean, w_clean)
@@ -94,41 +81,24 @@ def find_matches(query, vocab, phonetic_buckets,
         if pr >= 70:
             boost(w, pr)
 
-    # STEP 4: raw fuzzy matches
-    for scorer, threshold in [(fuzz.token_sort_ratio, 60), (fuzz.partial_ratio, 60)]:
+    for scorer in [fuzz.token_sort_ratio, fuzz.partial_ratio]:
         for w, sc, _ in process.extract(q, vocab, scorer=scorer, limit=200):
-            if sc >= threshold:
+            if sc >= 60:
                 boost(w, sc)
 
-    # STEP 5: bigram-overlap ≥ 0.5
-    for w in vocab:
-        ov = ngram_overlap(q, w)
-        if ov >= 0.5:
-            boost(w, ov * 100)
-
-    # STEP 6: Levenshtein distance
+    # STEP 4: Levenshtein distance
     L_THRESH = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L_THRESH:
             d = Levenshtein.distance(q, w)
             if d <= L_THRESH:
-                boost(w, 100 - (10 * d))
+                boost(w, 90 - 10 * d)
 
-    # STEP 7: Double-Metaphone phonetic matches
-    for code in doublemetaphone(q_clean):
-        if code:
-            for w in phonetic_buckets.get(code, []):
-                boost(w, 100)
+    # STEP 5: filter out irrelevant short words
+    final = [(w, s) for w, s in scores.items()
+             if len(w) > 2 or s >= 90]
 
-    # STEP 8: Syllabic overlap
-    for w in vocab:
-        so = syllabic_overlap(q, w)
-        if so > 0.4:
-            boost(w, so * 100)
-
-    # FINAL RANKING: score descending
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-
+    ranked = sorted(final, key=lambda kv: -kv[1])
     return [w for w, _ in ranked][:max_results]
 
 # --- Flask routes -----------------------------------------
@@ -154,7 +124,4 @@ def search_api():
 
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
-    return render_template("finneganswake.html", lines=enumerate(lines))
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    return render_template("fin_
