@@ -16,13 +16,14 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["DEBUG"] = False  # off in prod
 
-# --- Load & index the Wake -----------------
+# --- Load & index the text -----------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
 positions = {}
 word_re = re.compile(r"\b[\w'-]+\b")
+
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
         stripped = raw.strip(string.punctuation)
@@ -53,37 +54,52 @@ def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower().strip()
     q_clean = re.sub(r"[^a-z0-9]", "", q)
+
+    # precompute cleaned forms once
+    cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
     scores = {}
 
     def boost(w, sc):
         scores[w] = max(scores.get(w, 0), sc)
 
-    # precompute cleaned forms
-    cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
-
-    # STEP 1: prefix of query (half its length, min 4) → 100
+    # STEP 0: exact-clean match → 300 (absolute top)
     if q_clean:
-        prefix_len = max(4, len(q_clean)//2)
-        prefix_len = min(prefix_len, len(q_clean))
+        for w, w_cl in cleaned.items():
+            if w_cl == q_clean:
+                boost(w, 300)
+
+    # STEP 1: fuzzy-prefix bump → 110
+    # prefix length = half query (min 4), capped by full length
+    if q_clean:
+        half = len(q_clean) // 2
+        prefix_len = min(len(q_clean), max(4, half))
         prefix = q_clean[:prefix_len]
         for w, w_cl in cleaned.items():
-            if w_cl.startswith(prefix):
+            if len(w_cl) >= prefix_len:
+                sc = fuzz.ratio(prefix, w_cl[:prefix_len])
+                if sc >= 75:
+                    boost(w, 110)
+
+    # STEP 2: hard prefix boost → 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            if w_cl.startswith(q_clean):
                 boost(w, 100)
 
-    # STEP 2: full cleaned-substring → 95
+    # STEP 3: full cleaned-substring → 95
     if q_clean:
         for w, w_cl in cleaned.items():
             if q_clean in w_cl:
                 boost(w, 95)
 
-    # STEP 3: cleaned global fuzzy ratio ≥ 65 → up to 100
+    # STEP 4: cleaned global ratio ≥ 60 → up to 100
     if q_clean:
         for w, w_cl in cleaned.items():
             sc = fuzz.ratio(q_clean, w_cl)
-            if sc >= 65:
+            if sc >= 60:
                 boost(w, sc)
 
-    # STEP 4: cleaned Damerau-Levenshtein (swap=1 edit)      
+    # STEP 5: Damerau–Levenshtein (swap=1 edit)
     if q_clean:
         for w, w_cl in cleaned.items():
             d = DamerauLevenshtein.distance(q_clean, w_cl)
@@ -94,42 +110,42 @@ def find_matches(query, vocab, phonetic_buckets,
             elif d == 2:
                 boost(w, 80)
 
-    # STEP 5: cleaned token_set_ratio ≥ 70 → up to 100
+    # STEP 6: cleaned token_set_ratio ≥ 70
     if q_clean:
         for w, w_cl in cleaned.items():
             sc = fuzz.token_set_ratio(q_clean, w_cl)
             if sc >= 70:
                 boost(w, sc)
 
-    # STEP 6: cleaned partial_ratio ≥ 70 → up to 100
+    # STEP 7: cleaned partial_ratio ≥ 70
     if q_clean:
         for w, w_cl in cleaned.items():
             sc = fuzz.partial_ratio(q_clean, w_cl)
             if sc >= 70:
                 boost(w, sc)
 
-    # STEP 7: cleaned trigram overlap ≥ 0.6 → up to 100
+    # STEP 8: cleaned trigram overlap ≥ 0.5
     if q_clean:
         for w, w_cl in cleaned.items():
             ov = ngram_overlap(q_clean, w_cl, n=3)
-            if ov >= 0.6:
+            if ov >= 0.5:
                 boost(w, int(ov * 100))
 
-    # STEP 8: raw fuzzy token_sort_ratio ≥ 60
+    # STEP 9: raw-fuzzy token_sort_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.token_sort_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 9: raw fuzzy partial_ratio ≥ 60
+    # STEP 10: raw-fuzzy partial_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.partial_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 10: Levenshtein distance (≤2 edits short, ≤3 long)
+    # STEP 11: Levenshtein distance (≤2 edits short, ≤3 long)
     thresh = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= thresh:
@@ -137,24 +153,23 @@ def find_matches(query, vocab, phonetic_buckets,
             if d <= thresh:
                 boost(w, 100 - (d * 10))
 
-    # STEP 11: exact phonetic match → 95
+    # STEP 12: exact phonetic match → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 boost(w, 95)
 
-    # --- Final sort: by score desc, then length desc ---
+    # --- Final sort: by (score desc, length desc) ---
     ranked = sorted(
         scores.items(),
         key=lambda kv: (-kv[1], -len(kv[0]))
     )
 
-    # --- Demote 2-letter tokens & over-common 3-letters ---
+    # --- Demote 2-letter & over-common 3-letters ---
     tail_set = {
         w for w, _ in ranked
-        if len(w) == 2
-           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
+        if len(w) == 2 or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
     primary = [w for w, _ in ranked if w not in tail_set]
     tail    = [w for w, _ in ranked if w in tail_set]
