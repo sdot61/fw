@@ -7,38 +7,39 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6     # any 1–3 letter word occurring ≥ this will be demoted
-DEFAULT_MAX_RESULTS = 700   # cap on number of results
+High_Freq_Cutoff    = 6     # 3-letter words with ≥ this freq get demoted
+DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # turn off in prod
+app.config["DEBUG"] = False   # off in prod
 
-# --- Pre-load text & build indexes -------------------------
+# --- Pre-load the text & build indexes -------------------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
-positions = {}  # word_lower → list of { line: int, word: original }
+positions = {}  # word_lower -> list of {line, original}
 word_re = re.compile(r"\b[\w'-]+\b")
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
-        w = raw.strip(string.punctuation)
-        if not w:
+        stripped = raw.strip(string.punctuation)
+        if not stripped:
             continue
-        wl = w.lower()
-        vocab.add(wl)
-        positions.setdefault(wl, []).append({"word": raw, "line": lineno})
+        w = stripped.lower()
+        vocab.add(w)
+        positions.setdefault(w, []).append({"word": raw, "line": lineno})
 
-# phonetic buckets via Double Metaphone
+# Build phonetic buckets via Double Metaphone
 phonetic_buckets = {}
 for w in vocab:
-    p, s = doublemetaphone(w)
-    for code in (p, s):
+    pcode, scode = doublemetaphone(w)
+    for code in (pcode, scode):
         if code:
             phonetic_buckets.setdefault(code, []).append(w)
 
-# --- ngram helper -----------------------------------------
+
+# --- Matching utility -----------------------------------------
 def ngram_overlap(a: str, b: str, n: int = 2) -> float:
     a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
     b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
@@ -46,109 +47,100 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
-# --- Matching pipeline ------------------------------------
+
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
-    # strip out any non-alphanumeric so hyphens/apostrophes vanish
+    # strip punctuation so "mata-harried" -> "mataharried"
     q_clean = re.sub(r"[^a-z0-9]", "", q)
     scores = {}
 
-    # STEP 1: cleaned-substring boost → 100
-    for w in vocab:
-        w_clean = re.sub(r"[^a-z0-9]", "", w)
-        if q_clean and q_clean in w_clean:
-            scores[w] = 100
+    # --- 1) cleaned-prefix boost → 100
+    prefix = q_clean[:4]  # first 4 letters
+    if prefix:
+        for w in vocab:
+            w_clean = re.sub(r"[^a-z0-9]", "", w)
+            if w_clean.startswith(prefix):
+                scores[w] = 100
 
-    # STEP 2: cleaned-fuzzy partial_ratio ≥ 80 → 90
-    for w in vocab:
-        w_clean = re.sub(r"[^a-z0-9]", "", w)
-        pr = fuzz.partial_ratio(q_clean, w_clean)
-        if pr >= 80:
-            scores[w] = max(scores.get(w, 0), 90)
+    # --- 2) cleaned-substring boost → 95
+    if q_clean:
+        for w in vocab:
+            w_clean = re.sub(r"[^a-z0-9]", "", w)
+            if q_clean in w_clean:
+                scores[w] = max(scores.get(w, 0), 95)
 
-    # STEP 3: cleaned-fuzzy token_set_ratio ≥ 80 → 85
-    for w in vocab:
-        w_clean = re.sub(r"[^a-z0-9]", "", w)
-        ts = fuzz.token_set_ratio(q_clean, w_clean)
-        if ts >= 80:
-            scores[w] = max(scores.get(w, 0), 85)
+    # --- 3) cleaned-fuzzy token_set_ratio ≥ 75 → 90
+    if q_clean:
+        for w in vocab:
+            w_clean = re.sub(r"[^a-z0-9]", "", w)
+            ts = fuzz.token_set_ratio(q_clean, w_clean)
+            if ts >= 75:
+                scores[w] = max(scores.get(w, 0), 90)
 
-    # STEP 4: cleaned-trigram-overlap ≥ 0.5 → 80
-    for w in vocab:
-        w_clean = re.sub(r"[^a-z0-9]", "", w)
-        if ngram_overlap(q_clean, w_clean, n=3) >= 0.5:
-            scores[w] = max(scores.get(w, 0), 80)
+    # --- 4) fuzzy token_sort_ratio (raw) ≥ 60
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.token_sort_ratio,
+                                       limit=200):
+        if score >= 60:
+            scores[w] = max(scores.get(w, 0), score)
 
-    # STEP 5: raw fuzzy token_sort_ratio ≥ 50
-    for w, sc, _ in process.extract(q, vocab,
-                                     scorer=fuzz.token_sort_ratio,
-                                     limit=200):
-        if sc >= 50:
-            scores[w] = max(scores.get(w, 0), sc)
+    # --- 5) fuzzy partial_ratio (raw) ≥ 60
+    for w, score, _ in process.extract(q, vocab,
+                                       scorer=fuzz.partial_ratio,
+                                       limit=200):
+        if score >= 60:
+            scores[w] = max(scores.get(w, 0), score)
 
-    # STEP 6: raw fuzzy partial_ratio ≥ 50
-    for w, sc, _ in process.extract(q, vocab,
-                                     scorer=fuzz.partial_ratio,
-                                     limit=200):
-        if sc >= 50:
-            scores[w] = max(scores.get(w, 0), sc)
-
-    # STEP 7: Levenshtein distance (small words) → 100-(d*10)
+    # --- 6) Levenshtein distance (small edits)
     L_THRESH = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L_THRESH:
             d = Levenshtein.distance(q, w)
             if d <= L_THRESH:
-                lev = 100 - d*10
-                scores[w] = max(scores.get(w, 0), lev)
+                lev_score = 100 - (d * 10)
+                scores[w] = max(scores.get(w, 0), lev_score)
 
-    # STEP 8: raw bigram overlap ≥ 0.5 → int(ov*100)
+    # --- 7) bigram overlap (raw) ≥ 0.5
     for w in vocab:
         ov = ngram_overlap(q, w)
         if ov >= 0.5:
-            scores[w] = max(scores.get(w, 0), int(ov*100))
+            scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # STEP 9: raw token_set_ratio ≥ 60
-    for w, sc, _ in process.extract(q, vocab,
-                                     scorer=fuzz.token_set_ratio,
-                                     limit=200):
-        if sc >= 60:
-            scores[w] = max(scores.get(w, 0), sc)
-
-    # STEP 10: exact Double-Metaphone → 100
+    # --- 8) exact Double-Metaphone → 100
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 scores[w] = 100
 
-    # FINAL SORT: by score desc, then length desc (longer first)
-    ranked = sorted(scores.items(),
-                    key=lambda kv: (-kv[1], -len(kv[0])))
+    # --- FINAL SORT (score desc, length desc) ---
+    ranked = sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], -len(kv[0]))
+    )
 
-    # DEMOTION: only 1–2 letter words and over-common 3-letter words
-    tail = {
+    # --- DEMOTION (very short or over-common tiny words) ---
+    tail_set = {
         w for w, _ in ranked
-        if len(w) <= 2
-           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
+        if len(w) <= 2 or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
 
-    primary = [w for w, _ in ranked if w not in tail]
-    tail_list = [w for w, _ in ranked if w in tail]
+    primary = [w for w, _ in ranked if w not in tail_set]
+    tail    = [w for w, _ in ranked if w in tail_set]
 
-    return (primary + tail_list)[:max_results]
+    return (primary + tail)[:max_results]
 
 
-# --- Flask routes -----------------------------------------
+# --- Flask routes -----------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
         q = request.form.get("searchWord", "").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
-        ms = find_matches(q, vocab, phonetic_buckets)
-        out = [{"match": w, "positions": positions[w]} for w in ms]
+        matches = find_matches(q, vocab, phonetic_buckets)
+        out = [{"match": w, "positions": positions[w]} for w in matches]
         return render_template("index.html", match=out, search_word=q)
     return render_template("index.html", match=[], search_word="")
 
@@ -159,8 +151,8 @@ def search_api():
     q = data.get("query", "").strip()
     if not q:
         return jsonify([])
-    ms = find_matches(q, vocab, phonetic_buckets)
-    return jsonify([{"match": w, "positions": positions[w]} for w in ms])
+    matches = find_matches(q, vocab, phonetic_buckets)
+    return jsonify([{"match": w, "positions": positions[w]} for w in matches])
 
 
 @app.route("/finneganswake", methods=["GET"])
