@@ -7,7 +7,7 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6     # any 1–3 letter word occurring ≥ this will be demoted
+High_Freq_Cutoff    = 6     # any 3-letter word occurring ≥ this will be demoted
 DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 app = Flask(__name__)
@@ -62,7 +62,7 @@ def find_matches(query, vocab, phonetic_buckets,
     for w in vocab:
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         if q in w or q_clean in w_clean:
-            scores[w] = max(scores.get(w, 0), 100)
+            scores[w] = 100
 
     # 2) fuzzy token_sort_ratio (raw) ≥ 50
     for w, score, _ in process.extract(q, vocab,
@@ -119,7 +119,7 @@ def find_matches(query, vocab, phonetic_buckets,
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
-                scores[w] = max(scores.get(w, 0), 100)
+                scores[w] = 100
 
     # 10) sort by score desc, then by length desc
     ranked = sorted(
@@ -132,7 +132,7 @@ def find_matches(query, vocab, phonetic_buckets,
         w
         for w, _ in ranked
         if len(w) <= 2
-           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
+           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
     # 12) primary list: everything except those in tail_set
@@ -150,12 +150,12 @@ def find_matches(query, vocab, phonetic_buckets,
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        search_word = request.form.get("searchWord", "").strip()
-        if not search_word:
+        q = request.form.get("searchWord", "").strip()
+        if not q:
             return render_template("index.html", match=[], search_word="")
-        matches = find_matches(search_word, vocab, phonetic_buckets)
+        matches = find_matches(q, vocab, phonetic_buckets)
         out = [{"match": w, "positions": positions[w]} for w in matches]
-        return render_template("index.html", match=out, search_word=search_word)
+        return render_template("index.html", match=out, search_word=q)
     return render_template("index.html", match=[], search_word="")
 
 
