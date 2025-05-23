@@ -14,9 +14,9 @@ DEFAULT_MAX_RESULTS = 700   # cap on total results
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # turn off in prod
+app.config["DEBUG"] = False
 
-# --- Load & index the text -----------------
+# --- Load & index the Wake -----------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
@@ -49,7 +49,7 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
-# --- The core matching pipeline ------------
+# --- Core matching pipeline --------------
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower().strip()
@@ -59,67 +59,58 @@ def find_matches(query, vocab, phonetic_buckets,
     def boost(w, score):
         scores[w] = max(scores.get(w, 0), score)
 
-    # precompute cleaned vocab once
+    # precompute cleaned vocab forms
     cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
 
-    # STEP 1: cleaned-prefix (half-length, min 3) → 100
-    if q_clean:
-        prefix_n = max(3, len(q_clean)//2)
-        prefix_n = min(prefix_n, len(q_clean))
-        prefix = q_clean[:prefix_n]
-        for w, w_cl in cleaned.items():
-            if w_cl.startswith(prefix):
-                boost(w, 100)
-
-    # STEP 2: full cleaned-substring → 95
+    # STEP 1: cleaned-substring boost → 100
     if q_clean:
         for w, w_cl in cleaned.items():
             if q_clean in w_cl:
-                boost(w, 95)
+                boost(w, 100)
 
-    # STEP 3: cleaned Jaro-Winkler ≥ 0.80 → up to 100
+    # STEP 2: cleaned Jaro–Winkler ≥ 0.80 → up to 100
     if q_clean:
         for w, w_cl in cleaned.items():
             jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
             if jw >= 0.80:
                 boost(w, int(jw * 100))
 
-    # STEP 4: cleaned token_set_ratio ≥ 70
+    # STEP 3: cleaned trigram overlap ≥ 0.6 → up to 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            ov = ngram_overlap(q_clean, w_cl, n=3)
+            if ov >= 0.6:
+                boost(w, int(ov * 100))
+
+    # STEP 4: cleaned token_set_ratio ≥ 70 → up to 100
     if q_clean:
         for w, w_cl in cleaned.items():
             ts = fuzz.token_set_ratio(q_clean, w_cl)
             if ts >= 70:
                 boost(w, ts)
 
-    # STEP 5: cleaned partial_ratio ≥ 70
+    # STEP 5: cleaned partial_ratio ≥ 70 → up to 100
     if q_clean:
         for w, w_cl in cleaned.items():
             pr = fuzz.partial_ratio(q_clean, w_cl)
             if pr >= 70:
                 boost(w, pr)
 
-    # STEP 6: cleaned trigram-overlap ≥ 0.5
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            ov = ngram_overlap(q_clean, w_cl, n=3)
-            if ov >= 0.5:
-                boost(w, int(ov * 100))
-
-    # STEP 7: raw fuzzy token_sort_ratio ≥ 60
+    # STEP 6: raw fuzzy token_sort_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.token_sort_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 8: raw fuzzy partial_ratio ≥ 60
+    # STEP 7: raw fuzzy partial_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.partial_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 9: Levenshtein distance (≤2 edits if short, ≤3 if long)
+    # STEP 8: Levenshtein distance (≤2 edits short, ≤3 edits long)
     L = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L:
@@ -127,45 +118,44 @@ def find_matches(query, vocab, phonetic_buckets,
             if d <= L:
                 boost(w, 100 - (d * 10))
 
-    # STEP 10: exact Double-Metaphone → 95
+    # STEP 9: exact phonetic match → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 boost(w, 95)
 
-    # FINAL SORT: by score desc, then length desc
+    # FINAL SORT: score desc, then length desc
     ranked = sorted(
         scores.items(),
         key=lambda kv: (-kv[1], -len(kv[0]))
     )
 
-    # DEMOTE only 1–2 letters and over-common 3-letter words
-    tail_set = {
+    # DEMOTION: only 1–2 letters and over-common 3-letter words
+    tail = {
         w for w, _ in ranked
         if len(w) <= 2
            or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
-    primary = [w for w, _ in ranked if w not in tail_set]
-    tail    = [w for w, _ in ranked if w in tail_set]
+    primary = [w for w, _ in ranked if w not in tail]
+    tail_list = [w for w, _ in ranked if w in tail]
 
-    ordered = primary + tail
-
-    # FILTER OUT single-letter tokens (unless query itself is one letter)
+    # FILTER OUT single letters (unless the query itself is one char)
     if len(q) > 1:
-        ordered = [w for w in ordered if len(w) > 1]
+        primary = [w for w in primary if len(w) > 1]
 
-    return ordered[:max_results]
+    return (primary + tail_list)[:max_results]
 
-# --- Flask routes ----------------------------
+
+# --- Flask routes ---------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
         q = request.form.get("searchWord", "").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
-        matches = find_matches(q, vocab, phonetic_buckets)
-        out = [{"match": w, "positions": positions[w]} for w in matches]
+        ms = find_matches(q, vocab, phonetic_buckets)
+        out = [{"match": w, "positions": positions[w]} for w in ms]
         return render_template("index.html", match=out, search_word=q)
     return render_template("index.html", match=[], search_word="")
 
@@ -175,8 +165,8 @@ def search_api():
     q = data.get("query", "").strip()
     if not q:
         return jsonify([])
-    matches = find_matches(q, vocab, phonetic_buckets)
-    return jsonify([{"match": w, "positions": positions[w]} for w in matches])
+    ms = find_matches(q, vocab, phonetic_buckets)
+    return jsonify([{"match": w, "positions": positions[w]} for w in ms])
 
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
