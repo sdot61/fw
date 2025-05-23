@@ -8,15 +8,15 @@ import jellyfish
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
-High_Freq_Cutoff    = 6     # demote 3-letter words occurring ≥ this
-DEFAULT_MAX_RESULTS = 700   # cap on number of results
+High_Freq_Cutoff    = 6     # demote very common 3-letter words
+DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["DEBUG"] = False  # off in prod
 
-# --- Load & index the Wake -----------------
+# --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
@@ -30,9 +30,12 @@ for lineno, line in enumerate(lines):
             continue
         w = stripped.lower()
         vocab.add(w)
-        positions.setdefault(w, []).append({"word": raw, "line": lineno})
+        positions.setdefault(w, []).append({
+            "word": raw,
+            "line": lineno
+        })
 
-# --- Build phonetic buckets ---------------
+# --- Build phonetic buckets via Double Metaphone ---
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -40,7 +43,7 @@ for w in vocab:
         if code:
             phonetic_buckets.setdefault(code, []).append(w)
 
-# --- Helpers -------------------------------
+# --- Helpers ---------------------------------
 def ngram_overlap(a: str, b: str, n: int = 3) -> float:
     a_grams = {a[i:i+n] for i in range(len(a)-n+1)}
     b_grams = {b[i:i+n] for i in range(len(b)-n+1)}
@@ -50,9 +53,14 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
 
 def coverage_factor(w_cl: str, q_cl: str) -> float:
     cov = len(w_cl) / len(q_cl)
-    return cov / 0.5 if cov < 0.5 else 1.0
+    if cov < 0.5:
+        return cov / 0.5
+    if cov > 1.0:
+        # slight boost for longer words
+        return 1.0 + (cov - 1.0) * 0.5
+    return 1.0
 
-# --- Core matching pipeline --------------
+# --- Core matching pipeline -----------------
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower().strip()
@@ -60,24 +68,29 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    # Precompute cleaned forms
+    # precompute cleaned vocab once
     cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
     scores = {}
 
     def boost(w, sc):
         scores[w] = max(scores.get(w, 0), sc)
 
-    # STEP 1: cleaned-substring boost → 100
+    # STEP 0: exact-clean match → 10_000
+    for w, w_cl in cleaned.items():
+        if w_cl == q_clean:
+            boost(w, 10_000)
+
+    # STEP 1: substring boost → 100
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
             boost(w, 100)
 
-    # STEP 2: light prefix bump → +10 if already matched
+    # STEP 2: prefix boost → 110
     for w, w_cl in cleaned.items():
-        if scores.get(w, 0) > 0 and w_cl.startswith(q_clean):
-            scores[w] += 10
+        if w_cl.startswith(q_clean):
+            boost(w, 110)
 
-    # STEP 3: suffix boost → 85  (reduced from 95)
+    # STEP 3: suffix boost → 85
     suffix_len = min(len(q_clean), max(4, len(q_clean)//2))
     suffix = q_clean[-suffix_len:]
     for w, w_cl in cleaned.items():
@@ -90,27 +103,27 @@ def find_matches(query, vocab, phonetic_buckets,
         if jw >= 0.80:
             boost(w, int(jw * 100))
 
-    # STEP 5: trigram-overlap ≥ .60 → up to 100
+    # STEP 5: trigram overlap ≥ .60 → up to 100
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl, n=3)
         if ov >= 0.6:
             boost(w, int(ov * 100))
 
-    # STEP 6: token_set_ratio ≥ 70 → up to 100, penalized by coverage
+    # STEP 6: token_set_ratio ≥ 70 → up to 100, coverage-weighted
     for w, w_cl in cleaned.items():
         ts = fuzz.token_set_ratio(q_clean, w_cl)
         if ts >= 70:
             factor = coverage_factor(w_cl, q_clean)
             boost(w, int(ts * factor))
 
-    # STEP 7: partial_ratio ≥ 70 → up to 100, penalized by coverage
+    # STEP 7: partial_ratio ≥ 70 → up to 100, coverage-weighted
     for w, w_cl in cleaned.items():
         pr = fuzz.partial_ratio(q_clean, w_cl)
         if pr >= 70:
             factor = coverage_factor(w_cl, q_clean)
             boost(w, int(pr * factor))
 
-    # STEP 8: raw token_sort_ratio ≥ 60 → up to 100, penalized
+    # STEP 8: raw token_sort_ratio ≥ 60 → up to 100, coverage-weighted
     for w, sc, _ in process.extract(
         q, vocab, scorer=fuzz.token_sort_ratio, limit=200
     ):
@@ -120,7 +133,7 @@ def find_matches(query, vocab, phonetic_buckets,
             factor = coverage_factor(w_cl, q_clean)
             boost(w, int(sc * factor))
 
-    # STEP 9: raw partial_ratio ≥ 60 → up to 100, penalized
+    # STEP 9: raw partial_ratio ≥ 60 → up to 100, coverage-weighted
     for w, sc, _ in process.extract(
         q, vocab, scorer=fuzz.partial_ratio, limit=200
     ):
@@ -146,20 +159,13 @@ def find_matches(query, vocab, phonetic_buckets,
             for w in phonetic_buckets.get(code, []):
                 boost(w, 95)
 
-    # STEP 12: short-word penalty (len ≤ 5, non-exact match)
-    # 5→10 pts, 4→20 pts, 3→30 pts, 2→40 pts
-    for w in list(scores):
-        if cleaned[w] != q_clean:
-            L = len(cleaned[w])
-            if L <= 5:
-                penalty = (6 - L) * 10
-                scores[w] = max(0, scores[w] - penalty)
+    # --- Final sort: by score desc, then length desc
+    ranked = sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], -len(kv[0]))
+    )
 
-    # --- Final sort: score desc, then length desc ---
-    ranked = sorted(scores.items(),
-                    key=lambda kv: (-kv[1], -len(kv[0])))
-
-    # --- Tail-demotion: only 1–2 letters & over-common 3-letters ---
+    # --- Tail-demotion: 1–2 letters & over-common 3's
     tail_set = {
         w for w, _ in ranked
         if len(w) <= 2
@@ -169,7 +175,7 @@ def find_matches(query, vocab, phonetic_buckets,
     tail    = [w for w, _ in ranked if w in tail_set]
     ordered = primary + tail
 
-    # --- Filter out single-letter & non-ASCII tokens ---
+    # --- Filter out single-letter & non-ASCII tokens (multi-char queries)
     if len(q_clean) > 1:
         ordered = [
             w for w in ordered
