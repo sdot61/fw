@@ -8,15 +8,15 @@ import jellyfish
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
-High_Freq_Cutoff    = 6     # demote 3-letter words occurring ≥ this
-DEFAULT_MAX_RESULTS = 700   # cap on total results
+High_Freq_Cutoff    = 6    # demote 3-letter words occurring ≥ this
+DEFAULT_MAX_RESULTS = 700  # cap on total results
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False
+app.config["DEBUG"] = False  # off in prod
 
-# --- Load & index the Wake -----------------
+# --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
@@ -33,7 +33,7 @@ for lineno, line in enumerate(lines):
         vocab.add(w)
         positions.setdefault(w, []).append({"word": raw, "line": lineno})
 
-# --- Build phonetic buckets ---------------
+# --- Build phonetic buckets via Double Metaphone -----------
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -59,58 +59,71 @@ def find_matches(query, vocab, phonetic_buckets,
     def boost(w, score):
         scores[w] = max(scores.get(w, 0), score)
 
-    # precompute cleaned vocab forms
+    # precompute cleaned vocab forms once
     cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
 
-    # STEP 1: cleaned-substring boost → 100
+    # STEP 1: exact cleaned match → guarantee top
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            if w_cl == q_clean:
+                boost(w, 200)
+
+    # STEP 2: cleaned-substring boost → 100
     if q_clean:
         for w, w_cl in cleaned.items():
             if q_clean in w_cl:
                 boost(w, 100)
 
-    # STEP 2: cleaned Jaro–Winkler ≥ 0.80 → up to 100
+    # STEP 3: cleaned fuzzy ratio ≥ 75 → up to 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            sc = fuzz.ratio(q_clean, w_cl)
+            if sc >= 75:
+                boost(w, sc)
+
+    # STEP 4: cleaned token_set_ratio ≥ 70 → up to 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            sc = fuzz.token_set_ratio(q_clean, w_cl)
+            if sc >= 70:
+                boost(w, sc)
+
+    # STEP 5: cleaned partial_ratio ≥ 70 → up to 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            sc = fuzz.partial_ratio(q_clean, w_cl)
+            if sc >= 70:
+                boost(w, sc)
+
+    # STEP 6: cleaned trigram-overlap ≥ 0.5 → up to 100
+    if q_clean:
+        for w, w_cl in cleaned.items():
+            ov = ngram_overlap(q_clean, w_cl, n=3)
+            if ov >= 0.5:
+                boost(w, int(ov * 100))
+
+    # STEP 7: cleaned Jaro–Winkler ≥ 0.80 → up to 100
     if q_clean:
         for w, w_cl in cleaned.items():
             jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
             if jw >= 0.80:
                 boost(w, int(jw * 100))
 
-    # STEP 3: cleaned trigram overlap ≥ 0.6 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            ov = ngram_overlap(q_clean, w_cl, n=3)
-            if ov >= 0.6:
-                boost(w, int(ov * 100))
-
-    # STEP 4: cleaned token_set_ratio ≥ 70 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            ts = fuzz.token_set_ratio(q_clean, w_cl)
-            if ts >= 70:
-                boost(w, ts)
-
-    # STEP 5: cleaned partial_ratio ≥ 70 → up to 100
-    if q_clean:
-        for w, w_cl in cleaned.items():
-            pr = fuzz.partial_ratio(q_clean, w_cl)
-            if pr >= 70:
-                boost(w, pr)
-
-    # STEP 6: raw fuzzy token_sort_ratio ≥ 60
+    # STEP 8: raw fuzzy token_sort_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.token_sort_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 7: raw fuzzy partial_ratio ≥ 60
+    # STEP 9: raw fuzzy partial_ratio ≥ 60
     for w, sc, _ in process.extract(q, vocab,
                                      scorer=fuzz.partial_ratio,
                                      limit=200):
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 8: Levenshtein distance (≤2 edits short, ≤3 edits long)
+    # STEP 10: Levenshtein distance (≤2 edits short, ≤3 long)
     L = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L:
@@ -118,14 +131,14 @@ def find_matches(query, vocab, phonetic_buckets,
             if d <= L:
                 boost(w, 100 - (d * 10))
 
-    # STEP 9: exact phonetic match → 95
+    # STEP 11: exact phonetic match → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 boost(w, 95)
 
-    # FINAL SORT: score desc, then length desc
+    # FINAL SORT: by score desc, then length desc
     ranked = sorted(
         scores.items(),
         key=lambda kv: (-kv[1], -len(kv[0]))
@@ -134,18 +147,16 @@ def find_matches(query, vocab, phonetic_buckets,
     # DEMOTION: only 1–2 letters and over-common 3-letter words
     tail = {
         w for w, _ in ranked
-        if len(w) <= 2
-           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
+        if len(w) <= 2 or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
     primary = [w for w, _ in ranked if w not in tail]
     tail_list = [w for w, _ in ranked if w in tail]
 
-    # FILTER OUT single letters (unless the query itself is one char)
-    if len(q) > 1:
-        primary = [w for w in primary if len(w) > 1]
+    # FILTER OUT single-letter tokens (unless the query itself is one char)
+    if len(q_clean) > 1:
+        primary = [w for w in primary if len(cleaned[w]) > 1]
 
     return (primary + tail_list)[:max_results]
-
 
 # --- Flask routes ---------------------------
 @app.route("/", methods=["GET", "POST"])
