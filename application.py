@@ -7,8 +7,8 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
-High_Freq_Cutoff    = 6     # any 3-letter word occurring ≥ this will be demoted
-DEFAULT_MAX_RESULTS = 700   # cap on total results
+High_Freq_Cutoff    = 6     # any 1–3 letter word occurring ≥ this will be demoted
+DEFAULT_MAX_RESULTS = 700   # cap on number of results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -55,10 +55,11 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
+    # strip punctuation so "mata-harried" → "mataharried"
     q_clean = re.sub(r"[^a-z0-9]", "", q)
     scores = {}
 
-    # 1) substring boost on both raw and cleaned
+    # 1) substring boost on raw & cleaned
     for w in vocab:
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         if q in w or q_clean in w_clean:
@@ -85,14 +86,21 @@ def find_matches(query, vocab, phonetic_buckets,
         if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 5) fuzzy token_sort_ratio on cleaned strings ≥ 60
+    # 5) **new** cleaned trigram overlap ≥ 0.6
+    #    catches "matahari" ↔ "mataharried" / "mataharlotte" / "mataflora"
+    for w in vocab:
+        w_clean = re.sub(r"[^a-z0-9]", "", w)
+        if ngram_overlap(q_clean, w_clean, n=3) >= 0.6:
+            scores[w] = max(scores.get(w, 0), int(ngram_overlap(q_clean, w_clean, n=3) * 100))
+
+    # 6) fuzzy token_sort_ratio on cleaned ≥ 60
     for w in vocab:
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         score = fuzz.token_sort_ratio(q_clean, w_clean)
         if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 6) Levenshtein distance
+    # 7) Levenshtein distance
     L_THRESH = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L_THRESH:
@@ -101,33 +109,33 @@ def find_matches(query, vocab, phonetic_buckets,
                 lev_score = 100 - (d * 10)
                 scores[w] = max(scores.get(w, 0), lev_score)
 
-    # 7) bigram overlap (raw) ≥ 0.5
+    # 8) bigram overlap (raw) ≥ 0.5
     for w in vocab:
         ov = ngram_overlap(q, w)
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # 8) token_set_ratio (raw) ≥ 60
+    # 9) token_set_ratio (raw) ≥ 60
     for w, score, _ in process.extract(q, vocab,
                                        scorer=fuzz.token_set_ratio,
                                        limit=200):
         if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 9) exact phonetic match → boost to 100
+    # 10) exact phonetic match → boost to 100
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 scores[w] = 100
 
-    # 10) sort by score desc, then by length desc
+    # 11) sort by score desc, then by length desc
     ranked = sorted(
         scores.items(),
         key=lambda kv: (-kv[1], -len(kv[0]))
     )
 
-    # 11) demote all 1–2 letter words, and any 3-letter word ≥ cutoff
+    # 12) demote all 1–2 letter words, and any 3-letter word ≥ cutoff
     tail_set = {
         w
         for w, _ in ranked
@@ -135,13 +143,13 @@ def find_matches(query, vocab, phonetic_buckets,
            or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
     }
 
-    # 12) primary list: everything except those in tail_set
+    # 13) primary list: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 13) tail list: only those demoted
+    # 14) tail list: only those demoted
     tail = [w for w, _ in ranked if w in tail_set]
 
-    # 14) final ordering + cap
+    # 15) final ordering + cap
     ordered = primary + tail
     return ordered[:max_results]
 
