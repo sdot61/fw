@@ -8,12 +8,13 @@ import Levenshtein
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
+High_Freq_Cutoff    = 6     # demote 3-letter words occurring ≥ this
 DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # off in prod
+app.config["DEBUG"] = False
 
 # --- Load & index the Wake -----------------
 with open("finneganswake.txt", "r") as f:
@@ -22,7 +23,6 @@ with open("finneganswake.txt", "r") as f:
 vocab = set()
 positions = {}
 word_re = re.compile(r"\b[\w'-]+\b")
-
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
         stripped = raw.strip(string.punctuation)
@@ -54,21 +54,20 @@ def find_matches(query, vocab, phonetic_buckets,
     q = query.lower().strip()
     q_clean = re.sub(r"[^a-z0-9]", "", q)
 
-    # precompute cleaned vocab once
+    # precompute cleaned forms once
     cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
     scores = {}
 
     def boost(w, sc):
         scores[w] = max(scores.get(w, 0), sc)
 
-    # STEP 0: exact-clean match → 300 (top of list)
+    # STEP 0: exact-clean match → 300
     if q_clean:
         for w, w_cl in cleaned.items():
             if w_cl == q_clean:
                 boost(w, 300)
 
     # STEP 1: fuzzy-prefix bump → 110
-    #   use first-half of query (min 4 chars)
     if q_clean:
         half = len(q_clean) // 2
         prefix_len = min(len(q_clean), max(4, half))
@@ -91,14 +90,14 @@ def find_matches(query, vocab, phonetic_buckets,
             if q_clean in w_cl:
                 boost(w, 95)
 
-    # STEP 4: cleaned fuzzy ratio ≥ 60 → up to 100
+    # STEP 4: cleaned global ratio ≥ 60
     if q_clean:
         for w, w_cl in cleaned.items():
             sc = fuzz.ratio(q_clean, w_cl)
             if sc >= 60:
                 boost(w, sc)
 
-    # STEP 5: Damerau–Levenshtein (swap counts as 1)
+    # STEP 5: Damerau–Levenshtein (swap=1 edit)
     if q_clean:
         for w, w_cl in cleaned.items():
             d = DamerauLevenshtein.distance(q_clean, w_cl)
@@ -144,36 +143,47 @@ def find_matches(query, vocab, phonetic_buckets,
         if sc >= 60:
             boost(w, sc)
 
-    # STEP 11: classical Levenshtein (≤2 short / ≤3 long)
-    L = 2 if len(q) <= 5 else 3
+    # STEP 11: classical Levenshtein (≤2/≤3 edits)
+    thresh = 2 if len(q) <= 5 else 3
     for w in vocab:
-        if abs(len(w) - len(q)) <= L:
+        if abs(len(w) - len(q)) <= thresh:
             d = Levenshtein.distance(q, w)
-            if d <= L:
-                boost(w, 100 - d*10)
+            if d <= thresh:
+                boost(w, 100 - d * 10)
 
-    # STEP 12: exact Double-Metaphone → 95
+    # STEP 12: exact phonetic match → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 boost(w, 95)
 
-    # --- Final sort: score desc, then length desc ---
+    # --- Penalty for short words (length ≤ 4) ---
+    # lighter penalty for 4-letter, heavier for shorter
+    for w in list(scores):
+        L = len(w)
+        if q_clean and 1 < L <= 4 and cleaned[w] != q_clean:
+            penalty = (5 - L) * 5  # L=4→5pt, L=3→10pt, L=2→15pt
+            scores[w] = max(0, scores[w] - penalty)
+
+    # --- Final sort: by (score desc, length desc) ---
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], -len(kv[0])))
 
-    # --- STRICTER demotion: push ALL 1–3-letter words (except exact match) to the tail ---
+    # --- Tail-demotion: only 2-letter or over-common 3-letter words ---
     tail_set = {
         w for w, _ in ranked
-        if len(w) <= 3 and scores.get(w, 0) < 300
+        if len(w) == 2 or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
     primary = [w for w, _ in ranked if w not in tail_set]
     tail    = [w for w, _ in ranked if w in tail_set]
     ordered = primary + tail
 
-    # --- Final filter: drop all single-letter & non-ASCII tokens (for multi-char queries) ---
+    # --- Filter out single-letter & non-ASCII tokens ---
     if len(q_clean) > 1:
-        ordered = [w for w in ordered if len(w) > 1 and w.isascii()]
+        ordered = [
+            w for w in ordered
+            if len(w) > 1 and w.isascii()
+        ]
 
     return ordered[:max_results]
 
