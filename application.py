@@ -163,7 +163,7 @@ def find_matches(query, vocab, phonetic_buckets,
     for w in list(scores):
         L = len(w)
         if q_clean and 1 < L <= 4 and cleaned[w] != q_clean:
-            penalty = (5 - L) * 10  # L=4→5pt, L=3→10pt, L=2→15pt
+            penalty = (5 - L) * 20  # L=4→20pt, L=3→40pt, L=2→60pt
             scores[w] = max(0, scores[w] - penalty)
 
     # --- Final sort: by (score desc, length desc) ---
