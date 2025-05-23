@@ -8,7 +8,7 @@ from doublemetaphone import doublemetaphone
 
 # --- Configuration constants -------------------------
 High_Freq_Cutoff    = 6     # any 1–3 letter word occurring ≥ this will be demoted
-DEFAULT_MAX_RESULTS = 700   # cap on number of results
+DEFAULT_MAX_RESULTS = 700   # cap on total results
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -19,7 +19,7 @@ with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
-positions = {}  # word_lower → [ { line: int, word: original } ]
+positions = {}  # word_lower → list of { line: int, word: original }
 word_re = re.compile(r"\b[\w'-]+\b")
 
 for lineno, line in enumerate(lines):
@@ -55,7 +55,6 @@ def ngram_overlap(a: str, b: str, n: int = 2) -> float:
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
     q = query.lower()
-    # strip out punctuation so "mata-harried" → "mataharried"
     q_clean = re.sub(r"[^a-z0-9]", "", q)
     scores = {}
 
@@ -79,15 +78,21 @@ def find_matches(query, vocab, phonetic_buckets,
         if score >= 50:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 4) **NEW** fuzzy partial_ratio on cleaned strings ≥ 60
-    #    catches “matahari” → “mataharried”, “mataharlotte”, “mataflora”, etc.
+    # 4) fuzzy partial_ratio on cleaned strings ≥ 60
     for w in vocab:
         w_clean = re.sub(r"[^a-z0-9]", "", w)
         score = fuzz.partial_ratio(q_clean, w_clean)
         if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 5) Levenshtein distance
+    # 5) fuzzy token_sort_ratio on cleaned strings ≥ 60
+    for w in vocab:
+        w_clean = re.sub(r"[^a-z0-9]", "", w)
+        score = fuzz.token_sort_ratio(q_clean, w_clean)
+        if score >= 60:
+            scores[w] = max(scores.get(w, 0), score)
+
+    # 6) Levenshtein distance
     L_THRESH = 2 if len(q) <= 5 else 3
     for w in vocab:
         if abs(len(w) - len(q)) <= L_THRESH:
@@ -96,44 +101,47 @@ def find_matches(query, vocab, phonetic_buckets,
                 lev_score = 100 - (d * 10)
                 scores[w] = max(scores.get(w, 0), lev_score)
 
-    # 6) bigram overlap (raw) ≥ 0.5
+    # 7) bigram overlap (raw) ≥ 0.5
     for w in vocab:
         ov = ngram_overlap(q, w)
         if ov >= 0.5:
             scores[w] = max(scores.get(w, 0), int(ov * 100))
 
-    # 7) token_set_ratio (raw) ≥ 60
+    # 8) token_set_ratio (raw) ≥ 60
     for w, score, _ in process.extract(q, vocab,
                                        scorer=fuzz.token_set_ratio,
                                        limit=200):
         if score >= 60:
             scores[w] = max(scores.get(w, 0), score)
 
-    # 8) exact phonetic match → boost to 100
+    # 9) exact phonetic match → boost to 100
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         if code:
             for w in phonetic_buckets.get(code, []):
                 scores[w] = max(scores.get(w, 0), 100)
 
-    # 9) sort by descending score
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    # 10) sort by score desc, then by length desc
+    ranked = sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], -len(kv[0]))
+    )
 
-    # 10) demote all 1–2 letter words, and any 3-letter word ≥ cutoff
+    # 11) demote all 1–2 letter words, and any 3-letter word ≥ cutoff
     tail_set = {
         w
         for w, _ in ranked
         if len(w) <= 2
-           or (len(w) == 3 and len(positions.get(w, [])) >= High_Freq_Cutoff)
+           or (len(w) == 3 and len(positions[w]) >= High_Freq_Cutoff)
     }
 
-    # 11) primary list: everything except those in tail_set
+    # 12) primary list: everything except those in tail_set
     primary = [w for w, _ in ranked if w not in tail_set]
 
-    # 12) tail list: only those demoted
+    # 13) tail list: only those demoted
     tail = [w for w, _ in ranked if w in tail_set]
 
-    # 13) final ordering + cap
+    # 14) final ordering + cap
     ordered = primary + tail
     return ordered[:max_results]
 
@@ -142,19 +150,19 @@ def find_matches(query, vocab, phonetic_buckets,
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        q = request.form.get("searchWord", "").strip().lower()
-        if not q:
+        search_word = request.form.get("searchWord", "").strip()
+        if not search_word:
             return render_template("index.html", match=[], search_word="")
-        matches = find_matches(q, vocab, phonetic_buckets)
+        matches = find_matches(search_word, vocab, phonetic_buckets)
         out = [{"match": w, "positions": positions[w]} for w in matches]
-        return render_template("index.html", match=out, search_word=q)
+        return render_template("index.html", match=out, search_word=search_word)
     return render_template("index.html", match=[], search_word="")
 
 
 @app.route("/search", methods=["POST"])
 def search_api():
     data = request.get_json(force=True) or {}
-    q = data.get("query", "").strip().lower()
+    q = data.get("query", "").strip()
     if not q:
         return jsonify([])
     matches = find_matches(q, vocab, phonetic_buckets)
