@@ -9,7 +9,7 @@ from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
 High_Freq_Cutoff    = 6     # demote 3-letter words occurring ≥ this
-DEFAULT_MAX_RESULTS = 700   # cap on total results
+DEFAULT_MAX_RESULTS = 700   # cap on number of results
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
@@ -77,12 +77,12 @@ def find_matches(query, vocab, phonetic_buckets,
         if scores.get(w, 0) > 0 and w_cl.startswith(q_clean):
             scores[w] += 10
 
-    # STEP 3: suffix boost → 95
+    # STEP 3: suffix boost → 85  (reduced from 95)
     suffix_len = min(len(q_clean), max(4, len(q_clean)//2))
     suffix = q_clean[-suffix_len:]
     for w, w_cl in cleaned.items():
         if w_cl.endswith(suffix):
-            boost(w, 95)
+            boost(w, 85)
 
     # STEP 4: Jaro–Winkler ≥ .80 → up to 100
     for w, w_cl in cleaned.items():
@@ -130,7 +130,7 @@ def find_matches(query, vocab, phonetic_buckets,
             factor = coverage_factor(w_cl, q_clean)
             boost(w, int(sc * factor))
 
-    # STEP 10: Levenshtein distance (≤2 edits if short, ≤3 if long)
+    # STEP 10: Levenshtein distance (≤2 if short, ≤3 if long)
     thresh = 2 if len(q_clean) <= 5 else 3
     for w in vocab:
         w_cl = cleaned[w]
@@ -155,7 +155,7 @@ def find_matches(query, vocab, phonetic_buckets,
                 penalty = (6 - L) * 10
                 scores[w] = max(0, scores[w] - penalty)
 
-    # --- Final sort: by score desc, then length desc ---
+    # --- Final sort: score desc, then length desc ---
     ranked = sorted(scores.items(),
                     key=lambda kv: (-kv[1], -len(kv[0])))
 
@@ -196,8 +196,8 @@ def search_api():
     q = data.get("query", "").strip()
     if not q:
         return jsonify([])
-        ms = find_matches(q, vocab, phonetic_buckets)    
-        return jsonify([{"match": w, "positions": positions[w]} for w in ms])
+    ms = find_matches(q, vocab, phonetic_buckets)
+    return jsonify([{"match": w, "positions": positions[w]} for w in ms])
 
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
