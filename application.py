@@ -33,7 +33,7 @@ for lineno, line in enumerate(lines):
         vocab.add(w)
         positions.setdefault(w, []).append({"word": raw, "line": lineno})
 
-# --- Build phonetic buckets via DoubleMetaphone ---
+# --- Build Double Metaphone buckets ----------
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -49,18 +49,22 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
-# Precompute frequency map
+# Precompute frequencies
 freq = {w: len(positions[w]) for w in vocab}
 max_freq = max(freq.values())
 
-def length_factor(L: int, Q: int, β: float = 0.5) -> float:
-    # penalize shorter, boost longer
+def length_factor(L: int, Q: int, β: float = 0.25) -> float:
+    """
+    Softer normalization:
+    - shorter than query: L/Q
+    - longer than query: 1 + β*((L/Q)-1), with β reduced to 0.25
+    """
     if L <= Q:
         return L / Q
     return 1 + β * ((L / Q) - 1)
 
 def freq_factor(w: str) -> float:
-    # down-weight very common words
+    """Down-weight very common words."""
     return max(0.0, 1 - (freq[w] / max_freq))
 
 # --- Core matching pipeline --------------
@@ -83,31 +87,49 @@ def find_matches(query, vocab, phonetic_buckets,
         if q_clean in w_cl:
             boost(w, 100)
 
-    # prefix bump → +10
+    # prefix → 115 (stronger than substring)
     for w, w_cl in cleaned.items():
-        if raw_scores.get(w, 0) and w_cl.startswith(q_clean):
-            raw_scores[w] += 10
+        if w_cl.startswith(q_clean):
+            boost(w, 115)
 
-    # Jaro-Winkler, n-gram, fuzzy, edit-distance, phonetic
+    # suffix → 85
+    suffix_len = min(len(q_clean), max(4, len(q_clean)//2))
+    suffix = q_clean[-suffix_len:]
+    for w, w_cl in cleaned.items():
+        if w_cl.endswith(suffix):
+            boost(w, 85)
+
+    # Jaro–Winkler
     for w, w_cl in cleaned.items():
         jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
         if jw >= 0.80:
             boost(w, int(jw * 100))
+
+    # n-gram overlap
+    for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
         if ov >= 0.6:
             boost(w, int(ov * 100))
+
+    # fuzzy token_set_ratio
+    for w, w_cl in cleaned.items():
         ts = fuzz.token_set_ratio(q_clean, w_cl)
         if ts >= 70:
             boost(w, ts)
+
+    # fuzzy partial_ratio
+    for w, w_cl in cleaned.items():
         pr = fuzz.partial_ratio(q_clean, w_cl)
         if pr >= 70:
             boost(w, pr)
 
+    # raw fuzzy token_sort_ratio & partial_ratio
     for scorer in (fuzz.token_sort_ratio, fuzz.partial_ratio):
         for w, sc, _ in process.extract(q, vocab, scorer=scorer, limit=200):
             if sc >= 60:
                 boost(w, sc)
 
+    # Levenshtein (≤2 if short, ≤3 if long)
     thresh = 2 if len(q_clean) <= 5 else 3
     for w in vocab:
         w_cl = cleaned[w]
@@ -116,12 +138,13 @@ def find_matches(query, vocab, phonetic_buckets,
             if d <= thresh:
                 boost(w, 100 - d * 10)
 
+    # phonetic exact
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         for w in phonetic_buckets.get(code, []):
             boost(w, 95)
 
-    # 2) Normalization by length & frequency
+    # 2) Normalize by length & frequency
     normalized = []
     Q = len(q_clean)
     for w, raw in raw_scores.items():
@@ -133,27 +156,25 @@ def find_matches(query, vocab, phonetic_buckets,
     # 3) Sort by normalized score, then by length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) Tail-demotion of 1–2 letters and very common 3s
-    tail_set = {
+    # 4) Tail-demotion: 1–2 letters and over-common 3’s
+    tail = {
         w for w, _ in normalized
         if len(w) <= 2
            or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
     }
-    primary = [w for w, _ in normalized if w not in tail_set]
-    tail    = [w for w, _ in normalized if w in tail_set]
-    ordered = primary + tail
+    primary = [w for w, _ in normalized if w not in tail]
+    tail_list = [w for w, _ in normalized if w in tail]
+    ordered = primary + tail_list
 
-    # 5) Literal-exact bypass: pull any exact equal to the very front
+    # 5) Literal-exact bypass: top of list
     exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
-    # preserve appearance order
     exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
-    # remove duplicates
     final = []
     for w in exacts + ordered:
         if w not in final:
             final.append(w)
 
-    # 6) Filter single-letter & non-ASCII for multi-character queries
+    # 6) Filter single-letter & non-ASCII for multi-char queries
     if len(q_clean) > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
@@ -162,7 +183,7 @@ def find_matches(query, vocab, phonetic_buckets,
 # --- Flask routes ---------------------------
 @app.route("/", methods=["GET","POST"])
 def index():
-    if request.method == "POST":
+    if request.method=="POST":
         q = request.form.get("searchWord","").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
