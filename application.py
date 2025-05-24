@@ -89,10 +89,10 @@ def find_matches(query, vocab, phonetic_buckets,
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) full-substring anywhere → 120
+    # A) full-substring anywhere
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
-            boost(w, 120)
+            boost(w, 190)
 
     # B) full-prefix → 110
     for w, w_cl in cleaned.items():
