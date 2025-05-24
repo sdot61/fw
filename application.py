@@ -15,7 +15,7 @@ DEFAULT_MAX_RESULTS = 700    # cap on total results
 
 # length-bonus scale
 LENGTH_BONUS_MAX   = 50      # exact-length match bonus
-LENGTH_BONUS_STEP  = 20      # fall-off per char
+LENGTH_BONUS_STEP  = 10      # fall-off per char
 β_LENGTH           = 0.1     # mild boost for longer words
 
 # --- Flask setup ---------------------------
@@ -89,10 +89,10 @@ def find_matches(query, vocab, phonetic_buckets,
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) full-substring anywhere
+    # A) full-substring anywhere 
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
-            boost(w, 190)
+            boost(w, 250)
 
     # B) full-prefix → 110
     for w, w_cl in cleaned.items():
