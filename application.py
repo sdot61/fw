@@ -16,7 +16,7 @@ DEFAULT_MAX_RESULTS = 700    # cap on total results
 # length-bonus scale
 LENGTH_BONUS_MAX   = 50      # exact-length match bonus
 LENGTH_BONUS_STEP  = 10      # fall-off per character difference
-β_LENGTH           = 0.1     # mild boost for longer words
+β_LENGTH           = 0.1    # mild boost for longer words
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
@@ -30,6 +30,7 @@ with open("finneganswake.txt", "r") as f:
 vocab = set()
 positions = {}
 word_re = re.compile(r"\b[\w'-]+\b")
+
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
         stripped = raw.strip(string.punctuation)
@@ -84,23 +85,24 @@ def find_matches(query, vocab, phonetic_buckets,
         base_clean = re.sub(r"[^a-z0-9]", "", base)
         if base_clean:
             cleaned[w] = base_clean
-    candidates = list(cleaned.keys())
 
+    candidates = list(cleaned.keys())
     raw_scores = {}
+
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) full-substring anywhere → 120
+    # A) full-substring anywhere 
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
-            boost(w, 120)
+            boost(w, 250)
 
     # B) full-prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 110)
 
-    # C) cleaned ratio (fuzz.ratio) ≥ 60 → up to 100
+    # C) cleaned ratio (fuzz.ratio) ≥ 60 → up to 100  ← lowered from 65
     for w, w_cl in cleaned.items():
         sc = fuzz.ratio(q_clean, w_cl)
         if sc >= 60:
@@ -127,7 +129,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if w_cl.endswith(suffix):
             boost(w, 105)
 
-    # G) single/double transposition
+    # G) transpositions
     for w, w_cl in cleaned.items():
         d = DamerauLevenshtein.distance(q_clean, w_cl)
         if d == 1:
@@ -141,7 +143,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if jw >= 0.80:
             boost(w, int(jw * 100))
 
-    # I) trigram overlap ≥ .50 → up to 100
+    # I) trigram overlap ≥ 0.50 → up to 100  ← relaxed from 0.60
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
         if ov >= 0.50:
@@ -225,10 +227,10 @@ def find_matches(query, vocab, phonetic_buckets,
 
 
 # --- Flask routes ---------------------------
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        q = request.form.get("searchWord","").strip()
+        q = request.form.get("searchWord", "").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
         ms  = find_matches(q, vocab, phonetic_buckets)
@@ -236,18 +238,21 @@ def index():
         return render_template("index.html", match=out, search_word=q)
     return render_template("index.html", match=[], search_word="")
 
+
 @app.route("/search", methods=["POST"])
 def search_api():
     data = request.get_json(force=True) or {}
-    q = data.get("query","").strip()
+    q = data.get("query", "").strip()
     if not q:
         return jsonify([])
     ms = find_matches(q, vocab, phonetic_buckets)
     return jsonify([{"match": w, "positions": positions[w]} for w in ms])
 
+
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
     return render_template("finneganswake.html", lines=enumerate(lines))
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
