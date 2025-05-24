@@ -10,19 +10,20 @@ import jellyfish
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
-High_Freq_Cutoff    = 6     # demote very common 3-letter words
-DEFAULT_MAX_RESULTS = 700   # cap on total results
+High_Freq_Cutoff    = 6      # demote very common 3-letter words
+DEFAULT_MAX_RESULTS = 700    # cap on total results
 
-# length bonus settings: exact match=10, ±1=8, ±2=6, ±3=4, ±4=2, beyond=0
-LENGTH_BONUS_MAX    = 10
-LENGTH_BONUS_STEP   = 2
+# --- Length‐bonus settings: scaled higher ---
+# exact match = 20, ±1 = 18, ±2 = 16, ±3 = 14, ±4 = 12, ±5 = 10, beyond = 0
+LENGTH_BONUS_MAX  = 20
+LENGTH_BONUS_STEP = 2
 
-β_LENGTH            = 0.2   # mild boost for longer words
+β_LENGTH          = 0.2     # mild boost for longer words
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False
+app.config["DEBUG"] = False   # off in prod
 
 # --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
@@ -40,7 +41,7 @@ for lineno, line in enumerate(lines):
         vocab.add(w)
         positions.setdefault(w, []).append({"word": raw, "line": lineno})
 
-# --- Build phonetic buckets via Double Metaphone ---
+# --- Build Double Metaphone buckets ----------
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -61,13 +62,11 @@ freq     = {w: len(positions[w]) for w in vocab}
 max_freq = max(freq.values())
 
 def length_factor(L: int, Q: int) -> float:
-    """Shorter than query: L/Q; longer: 1 + β_LENGTH*(L/Q - 1)."""
     if L <= Q:
         return L / Q
     return 1 + β_LENGTH * ((L / Q) - 1)
 
 def freq_factor(w: str) -> float:
-    """Down-weight very common tokens."""
     return max(0.0, 1 - (freq[w] / max_freq))
 
 # --- Core matching pipeline --------------
@@ -78,34 +77,38 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    # exclude words containing apostrophes
-    candidates = [w for w in vocab if "'" not in w]
+    # Build candidate set: truncate at apostrophe
+    cleaned = {}
+    for w in vocab:
+        base = w.split("'", 1)[0]
+        base_clean = re.sub(r"[^a-z0-9]", "", base)
+        if base_clean:
+            cleaned[w] = base_clean
 
-    # cleaned forms
-    cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in candidates}
+    candidates = list(cleaned.keys())
 
     # 1) Raw scoring
     raw_scores = {}
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) full‐substring → 100
+    # A) full substring → 100
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
             boost(w, 100)
 
-    # B) full‐prefix → 110
+    # B) full prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 110)
 
-    # C) partial‐prefix (first 3 chars) → 105
+    # C) partial prefix (first 3) → 105
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
             boost(w, 105)
 
-    # D) first‐4 substring → 100
+    # D) first-4 substring → 100
     first4 = q_clean[:4]
     for w, w_cl in cleaned.items():
         if (first4 in w_cl
@@ -113,12 +116,12 @@ def find_matches(query, vocab, phonetic_buckets,
             and not w_cl.startswith(pre3)):
             boost(w, 100)
 
-    # E) single‐transposition → 105
+    # E) single transposition → 105
     for w, w_cl in cleaned.items():
         if DamerauLevenshtein.distance(q_clean, w_cl) == 1:
             boost(w, 105)
 
-    # F) double‐transposition (distance==2) → 90
+    # F) double transposition → 90
     for w, w_cl in cleaned.items():
         if DamerauLevenshtein.distance(q_clean, w_cl) == 2:
             boost(w, 90)
@@ -129,7 +132,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if jw >= 0.80:
             boost(w, int(jw * 100))
 
-    # H) trigram‐overlap ≥ .60 → up to 100
+    # H) trigram overlap ≥ .60 → up to 100
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
         if ov >= 0.6:
@@ -153,7 +156,7 @@ def find_matches(query, vocab, phonetic_buckets,
             if sc >= 60:
                 boost(w, sc)
 
-    # L) Levenshtein (≤2/≤3) → up to 100
+    # L) Levenshtein ≤2/≤3 → up to 100
     thresh = 2 if len(q_clean) <= 5 else 3
     for w in candidates:
         w_cl = cleaned[w]
@@ -169,14 +172,13 @@ def find_matches(query, vocab, phonetic_buckets,
             if w in cleaned:
                 boost(w, 95)
 
-    # N) sloping length‐match bonus
+    # N) sloping length bonus
     Qlen = len(q_clean)
     for w, w_cl in cleaned.items():
         if w in raw_scores:
             diff = abs(len(w_cl) - Qlen)
             bonus = max(0, LENGTH_BONUS_MAX - diff * LENGTH_BONUS_STEP)
-            if bonus > 0:
-                raw_scores[w] += bonus
+            raw_scores[w] += bonus
 
     # 2) Normalize by length & frequency
     normalized = []
@@ -186,10 +188,10 @@ def find_matches(query, vocab, phonetic_buckets,
         ff = freq_factor(w)
         normalized.append((w, raw * lf * ff))
 
-    # 3) Sort by normalized score desc, then length desc
+    # 3) Sort by score desc, then length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) Tail‐demotion: 1–2 letters & over-common 3’s to bottom
+    # 4) Tail‐demotion: 1–2 letters & common 3s
     tail = {
         w for w, _ in normalized
         if len(w) <= 2 or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
@@ -206,7 +208,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if w not in final:
             final.append(w)
 
-    # 6) filter single-letter & non-ASCII for multi-char queries
+    # 6) filter single‐letter & non‐ASCII for multi‐char queries
     if Qlen > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
