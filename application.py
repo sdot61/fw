@@ -14,7 +14,7 @@ High_Freq_Cutoff    = 6      # demote very common 3-letter words
 DEFAULT_MAX_RESULTS = 700    # cap on total results
 
 # length-bonus (unchanged)
-LENGTH_BONUS_MAX   = 50
+LENGTH_BONUS_MAX   = 30
 LENGTH_BONUS_STEP  = 10
 
 # dial back the long-word boost to reduce false positives
