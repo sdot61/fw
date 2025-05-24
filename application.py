@@ -13,17 +13,17 @@ from doublemetaphone import doublemetaphone
 High_Freq_Cutoff    = 6      # demote very common 3-letter words
 DEFAULT_MAX_RESULTS = 700    # cap on total results
 
-# --- Length‐bonus settings: tripled scale ---
-# exact match = 60, ±1 = 54, ±2 = 48, ±3 = 42, ±4 = 36, ±5 = 30, beyond = 0
-LENGTH_BONUS_MAX  = 60
-LENGTH_BONUS_STEP = 6
+# length-bonus (unchanged)
+LENGTH_BONUS_MAX   = 50
+LENGTH_BONUS_STEP  = 10
 
-β_LENGTH          = 0.2     # mild boost for longer words
+# dial back the long-word boost to reduce false positives
+β_LENGTH           = 0.1    # was 0.2
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False   # off in prod
+app.config["DEBUG"] = False
 
 # --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
@@ -58,16 +58,19 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
 # Precompute frequencies
-freq     = {w: len(positions[w]) for w in vocab}
-max_freq = max(freq.values())
+freq      = {w: len(positions[w]) for w in vocab}
+max_freq  = max(freq.values())
 
 def length_factor(L: int, Q: int) -> float:
+    # shorter than query: L/Q; longer: 1 + β_LENGTH*(L/Q - 1)
     if L <= Q:
         return L / Q
     return 1 + β_LENGTH * ((L / Q) - 1)
 
 def freq_factor(w: str) -> float:
-    return max(0.0, 1 - (freq[w] / max_freq))
+    # gentler penalty on common words via square-root scaling
+    f = freq[w] / max_freq
+    return max(0.0, 1 - math.sqrt(f))
 
 # --- Core matching pipeline --------------
 def find_matches(query, vocab, phonetic_buckets,
@@ -77,7 +80,7 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    # Build candidate set: truncate at apostrophe
+    # truncate at apostrophe
     cleaned = {}
     for w in vocab:
         base = w.split("'", 1)[0]
@@ -87,22 +90,22 @@ def find_matches(query, vocab, phonetic_buckets,
 
     candidates = list(cleaned.keys())
 
-    # 1) Raw scoring
+    # 1) raw scoring
     raw_scores = {}
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) full substring → 100
+    # A) full-substring → 100
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
             boost(w, 100)
 
-    # B) full prefix → 110
+    # B) full-prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 110)
 
-    # C) partial prefix (first 3) → 105
+    # C) partial-prefix (first 3) → 105
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
@@ -172,15 +175,15 @@ def find_matches(query, vocab, phonetic_buckets,
             if w in cleaned:
                 boost(w, 95)
 
-    # N) sloping length bonus (tripled scale)
+    # N) sloping length bonus
     Qlen = len(q_clean)
     for w, w_cl in cleaned.items():
         if w in raw_scores:
-            diff = abs(len(w_cl) - Qlen)
+            diff  = abs(len(w_cl) - Qlen)
             bonus = max(0, LENGTH_BONUS_MAX - diff * LENGTH_BONUS_STEP)
             raw_scores[w] += bonus
 
-    # 2) Normalize by length & frequency
+    # 2) normalize by length & (re-tuned) frequency
     normalized = []
     for w, raw in raw_scores.items():
         L  = len(cleaned[w])
@@ -188,10 +191,10 @@ def find_matches(query, vocab, phonetic_buckets,
         ff = freq_factor(w)
         normalized.append((w, raw * lf * ff))
 
-    # 3) Sort by score desc, then length desc
+    # 3) sort by normalized score desc, then length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) Tail‐demotion: 1–2 letters & common 3s
+    # 4) tail-demotion (1–2 letters & over-common 3s)
     tail = {
         w for w, _ in normalized
         if len(w) <= 2 or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
@@ -200,7 +203,7 @@ def find_matches(query, vocab, phonetic_buckets,
     tail_list = [w for w, _ in normalized if w in tail]
     ordered   = primary + tail_list
 
-    # 5) exact‐literal bypass at top
+    # 5) exact-literal bypass at top
     exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
     exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
     final = []
@@ -208,7 +211,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if w not in final:
             final.append(w)
 
-    # 6) filter single‐letter & non‐ASCII for multi‐char queries
+    # 6) drop single-letter & non-ASCII for multi-char queries
     if Qlen > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
