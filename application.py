@@ -18,7 +18,7 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["DEBUG"] = False  # off in prod
 
 # --- Load & index Finnegans Wake ------------
-with open("finneganswake.txt") as f:
+with open("finneganswake.txt", "r") as f:
     lines = f.read().splitlines()
 
 vocab = set()
@@ -49,22 +49,21 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
-# Precompute frequencies
+# Precompute frequencies & max
 freq = {w: len(positions[w]) for w in vocab}
 max_freq = max(freq.values())
 
-def length_factor(L: int, Q: int, β: float = 0.25) -> float:
+def length_factor(L: int, Q: int, β: float = 0.2) -> float:
     """
-    Softer normalization:
-    - shorter than query: L/Q
-    - longer than query: 1 + β*((L/Q)-1), with β reduced to 0.25
+    - If L ≤ Q: penalize lightly by L/Q
+    - If L >  Q: reward mildly by 1 + β*(L/Q - 1)
     """
     if L <= Q:
         return L / Q
     return 1 + β * ((L / Q) - 1)
 
 def freq_factor(w: str) -> float:
-    """Down-weight very common words."""
+    """Down-weight very common tokens."""
     return max(0.0, 1 - (freq[w] / max_freq))
 
 # --- Core matching pipeline --------------
@@ -87,7 +86,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if q_clean in w_cl:
             boost(w, 100)
 
-    # prefix → 115 (stronger than substring)
+    # prefix → 115
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 115)
@@ -99,31 +98,31 @@ def find_matches(query, vocab, phonetic_buckets,
         if w_cl.endswith(suffix):
             boost(w, 85)
 
-    # Jaro–Winkler
+    # Jaro–Winkler ≥ .80
     for w, w_cl in cleaned.items():
         jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
         if jw >= 0.80:
             boost(w, int(jw * 100))
 
-    # n-gram overlap
+    # trigram overlap ≥ .6
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
         if ov >= 0.6:
             boost(w, int(ov * 100))
 
-    # fuzzy token_set_ratio
+    # token_set_ratio ≥ 70
     for w, w_cl in cleaned.items():
         ts = fuzz.token_set_ratio(q_clean, w_cl)
         if ts >= 70:
             boost(w, ts)
 
-    # fuzzy partial_ratio
+    # partial_ratio ≥ 70
     for w, w_cl in cleaned.items():
         pr = fuzz.partial_ratio(q_clean, w_cl)
         if pr >= 70:
             boost(w, pr)
 
-    # raw fuzzy token_sort_ratio & partial_ratio
+    # raw fuzzy extracts
     for scorer in (fuzz.token_sort_ratio, fuzz.partial_ratio):
         for w, sc, _ in process.extract(q, vocab, scorer=scorer, limit=200):
             if sc >= 60:
@@ -138,7 +137,7 @@ def find_matches(query, vocab, phonetic_buckets,
             if d <= thresh:
                 boost(w, 100 - d * 10)
 
-    # phonetic exact
+    # phonetic exact → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         for w in phonetic_buckets.get(code, []):
@@ -153,10 +152,10 @@ def find_matches(query, vocab, phonetic_buckets,
         ff = freq_factor(w)
         normalized.append((w, raw * lf * ff))
 
-    # 3) Sort by normalized score, then by length desc
+    # 3) Sort by normalized score then by length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) Tail-demotion: 1–2 letters and over-common 3’s
+    # 4) Tail-demotion: 1–2 letters & over-common 3’s
     tail = {
         w for w, _ in normalized
         if len(w) <= 2
@@ -166,7 +165,7 @@ def find_matches(query, vocab, phonetic_buckets,
     tail_list = [w for w, _ in normalized if w in tail]
     ordered = primary + tail_list
 
-    # 5) Literal-exact bypass: top of list
+    # 5) Literal-exact bypass: put exact equals first
     exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
     exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
     final = []
@@ -174,7 +173,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if w not in final:
             final.append(w)
 
-    # 6) Filter single-letter & non-ASCII for multi-char queries
+    # 6) Filter single-letter & non-ASCII for multi-char query
     if len(q_clean) > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
