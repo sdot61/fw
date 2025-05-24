@@ -15,7 +15,7 @@ DEFAULT_MAX_RESULTS = 700    # cap on total results
 
 # length-bonus scale
 LENGTH_BONUS_MAX   = 50      # exact-length match bonus
-LENGTH_BONUS_STEP  = 10      # fall-off per character difference
+LENGTH_BONUS_STEP  = 30      # fall-off per character difference
 β_LENGTH           = 0.1     # mild boost for longer words
 
 # --- Flask setup ---------------------------
