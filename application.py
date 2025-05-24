@@ -105,11 +105,11 @@ def find_matches(query, vocab, phonetic_buckets,
         if sc >= 65:
             boost(w, sc)
 
-    # D) partial-prefix (first 3) → 105
+    # D) partial-prefix (first 3)
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
-            boost(w, 105)
+            boost(w, 159)
 
     # E) first-4 substring → 100
     first4 = q_clean[:4]
