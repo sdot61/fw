@@ -95,7 +95,7 @@ def find_matches(query, vocab, phonetic_buckets,
     # A) full-substring anywhere 
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
-            boost(w, 120)
+            boost(w, 250)
 
     # B) full-prefix → 110
     for w, w_cl in cleaned.items():
