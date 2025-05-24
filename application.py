@@ -12,12 +12,17 @@ from doublemetaphone import doublemetaphone
 # --- Configuration -------------------------
 High_Freq_Cutoff    = 6     # demote very common 3-letter words
 DEFAULT_MAX_RESULTS = 700   # cap on total results
+
+# length bonus settings: exact match=10, ±1=8, ±2=6, ±3=4, ±4=2, beyond=0
+LENGTH_BONUS_MAX    = 10
+LENGTH_BONUS_STEP   = 2
+
 β_LENGTH            = 0.2   # mild boost for longer words
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False  # off in prod
+app.config["DEBUG"] = False
 
 # --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
@@ -35,7 +40,7 @@ for lineno, line in enumerate(lines):
         vocab.add(w)
         positions.setdefault(w, []).append({"word": raw, "line": lineno})
 
-# --- Build Double Metaphone buckets ----------
+# --- Build phonetic buckets via Double Metaphone ---
 phonetic_buckets = {}
 for w in vocab:
     pcode, scode = doublemetaphone(w)
@@ -73,7 +78,11 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in vocab}
+    # exclude words containing apostrophes
+    candidates = [w for w in vocab if "'" not in w]
+
+    # cleaned forms
+    cleaned = {w: re.sub(r"[^a-z0-9]", "", w) for w in candidates}
 
     # 1) Raw scoring
     raw_scores = {}
@@ -85,34 +94,33 @@ def find_matches(query, vocab, phonetic_buckets,
         if q_clean in w_cl:
             boost(w, 100)
 
-    # B) full‐prefix → 120
+    # B) full‐prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
-            boost(w, 120)
+            boost(w, 110)
 
-    # C) partial‐prefix (first 3 chars) → 115
+    # C) partial‐prefix (first 3 chars) → 105
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
-            boost(w, 115)
+            boost(w, 105)
 
-    # D) first‐4 substring → 110
+    # D) first‐4 substring → 100
     first4 = q_clean[:4]
     for w, w_cl in cleaned.items():
         if (first4 in w_cl
             and not w_cl.startswith(q_clean)
             and not w_cl.startswith(pre3)):
-            boost(w, 110)
+            boost(w, 100)
 
     # E) single‐transposition → 105
     for w, w_cl in cleaned.items():
         if DamerauLevenshtein.distance(q_clean, w_cl) == 1:
             boost(w, 105)
 
-    # F) suffix → 90  ← lowered from 110 so it doesn’t outrank others
-    suffix = q_clean[-4:]
+    # F) double‐transposition (distance==2) → 90
     for w, w_cl in cleaned.items():
-        if w_cl.endswith(suffix) and not w_cl.startswith(q_clean):
+        if DamerauLevenshtein.distance(q_clean, w_cl) == 2:
             boost(w, 90)
 
     # G) Jaro–Winkler ≥ .80 → up to 100
@@ -139,15 +147,15 @@ def find_matches(query, vocab, phonetic_buckets,
         if pr >= 70:
             boost(w, pr)
 
-    # K) raw fuzzy extracts (token_sort + partial) ≥ 60
+    # K) raw fuzzy extracts ≥ 60
     for scorer in (fuzz.token_sort_ratio, fuzz.partial_ratio):
-        for w, sc, _ in process.extract(q, vocab, scorer=scorer, limit=200):
+        for w, sc, _ in process.extract(q, candidates, scorer=scorer, limit=200):
             if sc >= 60:
                 boost(w, sc)
 
-    # L) Levenshtein distance (≤2 short, ≤3 long) → up to 100
+    # L) Levenshtein (≤2/≤3) → up to 100
     thresh = 2 if len(q_clean) <= 5 else 3
-    for w in vocab:
+    for w in candidates:
         w_cl = cleaned[w]
         if abs(len(w_cl) - len(q_clean)) <= thresh:
             d = Levenshtein.distance(q_clean, w_cl)
@@ -158,31 +166,39 @@ def find_matches(query, vocab, phonetic_buckets,
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         for w in phonetic_buckets.get(code, []):
-            boost(w, 95)
+            if w in cleaned:
+                boost(w, 95)
+
+    # N) sloping length‐match bonus
+    Qlen = len(q_clean)
+    for w, w_cl in cleaned.items():
+        if w in raw_scores:
+            diff = abs(len(w_cl) - Qlen)
+            bonus = max(0, LENGTH_BONUS_MAX - diff * LENGTH_BONUS_STEP)
+            if bonus > 0:
+                raw_scores[w] += bonus
 
     # 2) Normalize by length & frequency
     normalized = []
-    Q = len(q_clean)
     for w, raw in raw_scores.items():
         L  = len(cleaned[w])
-        lf = length_factor(L, Q)
+        lf = length_factor(L, Qlen)
         ff = freq_factor(w)
         normalized.append((w, raw * lf * ff))
 
-    # 3) Sort by normalized score desc, then by word‐length desc
+    # 3) Sort by normalized score desc, then length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) Tail‐demotion: 1–2 letters & over‐common 3’s to bottom
+    # 4) Tail‐demotion: 1–2 letters & over-common 3’s to bottom
     tail = {
         w for w, _ in normalized
-        if len(w) <= 2
-           or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
+        if len(w) <= 2 or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
     }
     primary   = [w for w, _ in normalized if w not in tail]
     tail_list = [w for w, _ in normalized if w in tail]
     ordered   = primary + tail_list
 
-    # 5) exact‐literal bypass: put exact matches at very top
+    # 5) exact‐literal bypass at top
     exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
     exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
     final = []
@@ -190,8 +206,8 @@ def find_matches(query, vocab, phonetic_buckets,
         if w not in final:
             final.append(w)
 
-    # 6) Drop single‐letter & non‐ASCII for multi‐character queries
-    if len(q_clean) > 1:
+    # 6) filter single-letter & non-ASCII for multi-char queries
+    if Qlen > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
     return final[:max_results]
@@ -211,7 +227,7 @@ def index():
 @app.route("/search", methods=["POST"])
 def search_api():
     data = request.get_json(force=True) or {}
-    q  = data.get("query","").strip()
+    q = data.get("query","").strip()
     if not q:
         return jsonify([])
     ms = find_matches(q, vocab, phonetic_buckets)
