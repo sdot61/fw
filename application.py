@@ -10,19 +10,18 @@ import jellyfish
 from doublemetaphone import doublemetaphone
 
 # --- Configuration -------------------------
-High_Freq_Cutoff    = 6      
-DEFAULT_MAX_RESULTS = 700    
+High_Freq_Cutoff    = 6      # demote very common 3-letter words
+DEFAULT_MAX_RESULTS = 700    # cap on total results
 
-# length‐bonus scale
-LENGTH_BONUS_MAX   = 50     
-LENGTH_BONUS_STEP  = 10     
-
-β_LENGTH           = 0.1    
+# length-bonus scale
+LENGTH_BONUS_MAX   = 50      # exact-length match bonus
+LENGTH_BONUS_STEP  = 10      # fall-off per character difference
+β_LENGTH           = 0.1     # mild boost for longer words
 
 # --- Flask setup ---------------------------
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
-app.config["DEBUG"] = False
+app.config["DEBUG"] = False   # off in prod
 
 # --- Load & index Finnegans Wake ------------
 with open("finneganswake.txt", "r") as f:
@@ -68,6 +67,7 @@ def freq_factor(w: str) -> float:
     f = freq[w] / max_freq
     return max(0.0, 1 - math.sqrt(f))
 
+
 # --- Core matching pipeline --------------
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
@@ -76,37 +76,42 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    # truncate at apostrophe
+    # truncate at apostrophe for candidate & cleaned forms
     cleaned = {}
     for w in vocab:
         base = w.split("'", 1)[0]
         base_clean = re.sub(r"[^a-z0-9]", "", base)
         if base_clean:
             cleaned[w] = base_clean
-
     candidates = list(cleaned.keys())
-    raw_scores = {}
 
+    raw_scores = {}
     def boost(w, sc):
         raw_scores[w] = max(raw_scores.get(w, 0), sc)
 
-    # A) substring → 100
+    # A) full substring → 100
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
             boost(w, 100)
 
-    # B) prefix → 110
+    # B) full prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 110)
 
-    # C) partial‐prefix (3) → 105
+    # C) cleaned ratio (fuzz.ratio) ≥ 65 → up to 100
+    for w, w_cl in cleaned.items():
+        sc = fuzz.ratio(q_clean, w_cl)
+        if sc >= 65:
+            boost(w, sc)
+
+    # D) partial-prefix (first 3) → 105
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
             boost(w, 105)
 
-    # D) first‐4 substring → 100
+    # E) first-4 substring → 100
     first4 = q_clean[:4]
     for w, w_cl in cleaned.items():
         if (first4 in w_cl
@@ -114,116 +119,137 @@ def find_matches(query, vocab, phonetic_buckets,
             and not w_cl.startswith(pre3)):
             boost(w, 100)
 
-    # E) suffix match → 105  ← *this is now unconditional*
+    # F) suffix match (last N chars) → 105
     SUB_LEN = max(4, len(q_clean)//2)
     suffix  = q_clean[-SUB_LEN:]
     for w, w_cl in cleaned.items():
         if w_cl.endswith(suffix):
             boost(w, 105)
 
-    # F) transpositions & fuzzy/phonetic as before…
+    # G) single-transposition → 105, double → 90
     for w, w_cl in cleaned.items():
-        if DamerauLevenshtein.distance(q_clean, w_cl) == 1:
+        d = DamerauLevenshtein.distance(q_clean, w_cl)
+        if d == 1:
             boost(w, 105)
-        elif DamerauLevenshtein.distance(q_clean, w_cl) == 2:
+        elif d == 2:
             boost(w, 90)
 
+    # H) Jaro–Winkler ≥ .80 → up to 100
     for w, w_cl in cleaned.items():
         jw = jellyfish.jaro_winkler_similarity(q_clean, w_cl)
         if jw >= 0.80:
-            boost(w, int(jw*100))
+            boost(w, int(jw * 100))
 
+    # I) trigram overlap ≥ .60 → up to 100
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
         if ov >= 0.6:
-            boost(w, int(ov*100))
+            boost(w, int(ov * 100))
+
+    # J) fuzzy token_set_ratio ≥ 70 → up to 100
+    for w, w_cl in cleaned.items():
         ts = fuzz.token_set_ratio(q_clean, w_cl)
         if ts >= 70:
             boost(w, ts)
+
+    # K) fuzzy partial_ratio ≥ 70 → up to 100
+    for w, w_cl in cleaned.items():
         pr = fuzz.partial_ratio(q_clean, w_cl)
         if pr >= 70:
             boost(w, pr)
 
+    # L) raw fuzzy extracts ≥ 60
     for scorer in (fuzz.token_sort_ratio, fuzz.partial_ratio):
         for w, sc, _ in process.extract(q, candidates, scorer=scorer, limit=200):
             if sc >= 60:
                 boost(w, sc)
 
-    thresh = 2 if len(q_clean) <=5 else 3
+    # M) Levenshtein (≤2/≤3) → up to 100
+    thresh = 2 if len(q_clean) <= 5 else 3
     for w in candidates:
         w_cl = cleaned[w]
-        if abs(len(w_cl)-len(q_clean)) <= thresh:
+        if abs(len(w_cl) - len(q_clean)) <= thresh:
             d = Levenshtein.distance(q_clean, w_cl)
             if d <= thresh:
-                boost(w, 100 - d*10)
+                boost(w, 100 - d * 10)
 
+    # N) exact phonetic match → 95
     pcode, scode = doublemetaphone(q_clean)
     for code in (pcode, scode):
         for w in phonetic_buckets.get(code, []):
             if w in cleaned:
                 boost(w, 95)
 
-    # O) length bonus (50/10)
+    # O) sloping length bonus (50/10)
     Qlen = len(q_clean)
     for w, w_cl in cleaned.items():
         if w in raw_scores:
-            diff  = abs(len(w_cl)-Qlen)
-            bonus = max(0, LENGTH_BONUS_MAX - diff*LENGTH_BONUS_STEP)
+            diff  = abs(len(w_cl) - Qlen)
+            bonus = max(0, LENGTH_BONUS_MAX - diff * LENGTH_BONUS_STEP)
             raw_scores[w] += bonus
 
-    # normalize, sort, tail‐demote & exact‐bypass exactly as before…
-
+    # 2) Normalize by length & frequency
     normalized = []
     for w, raw in raw_scores.items():
         L  = len(cleaned[w])
-        normalized.append((w, raw * length_factor(L,Qlen) * freq_factor(w)))
+        lf = length_factor(L, Qlen)
+        ff = freq_factor(w)
+        normalized.append((w, raw * lf * ff))
 
-    normalized.sort(key=lambda x:(-x[1], -len(x[0])))
+    # 3) Sort by normalized score desc, then length desc
+    normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    tail   = {w for w,_ in normalized
-              if len(w)<=2 or (len(w)==3 and freq[w]>=High_Freq_Cutoff)}
-    primary   = [w for w,_ in normalized if w not in tail]
-    tail_list = [w for w,_ in normalized if w in tail]
+    # 4) Tail-demotion: 1–2 letters & over-common 3s
+    tail = {
+        w for w, _ in normalized
+        if len(w) <= 2 or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
+    }
+    primary   = [w for w, _ in normalized if w not in tail]
+    tail_list = [w for w, _ in normalized if w in tail]
     ordered   = primary + tail_list
 
-    exacts = [w for w,w_cl in cleaned.items() if w_cl==q_clean]
-    exacts.sort(key=lambda w:min(p["line"] for p in positions[w]))
-
+    # 5) Exact-literal bypass at top
+    exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
+    exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
     final = []
     for w in exacts + ordered:
         if w not in final:
             final.append(w)
 
-    if len(q_clean)>1:
-        final = [w for w in final
-                 if len(cleaned[w])>1 and w.isascii()]
+    # 6) Drop single-letter & non-ASCII for multi-char queries
+    if Qlen > 1:
+        final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
     return final[:max_results]
 
+
 # --- Flask routes ---------------------------
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def index():
-    if request.method=="POST":
-        q = request.form.get("searchWord","").strip()
+    if request.method == "POST":
+        q = request.form.get("searchWord", "").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
         ms  = find_matches(q, vocab, phonetic_buckets)
-        out = [{"match":w,"positions":positions[w]} for w in ms]
-        return render_template("index.html",match=out,search_word=q)
-    return render_template("index.html",match=[],search_word="")
+        out = [{"match": w, "positions": positions[w]} for w in ms]
+        return render_template("index.html", match=out, search_word=q)
+    return render_template("index.html", match=[], search_word="")
+
 
 @app.route("/search", methods=["POST"])
 def search_api():
     data = request.get_json(force=True) or {}
-    q = data.get("query","").strip()
+    q = data.get("query", "").strip()
     if not q:
         return jsonify([])
     ms = find_matches(q, vocab, phonetic_buckets)
-    return jsonify([{"match":w,"positions":positions[w]} for w in ms])
+    return jsonify([{"match": w, "positions": positions[w]} for w in ms])
+
 
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
     return render_template("finneganswake.html", lines=enumerate(lines))
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
