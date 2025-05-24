@@ -13,10 +13,10 @@ from doublemetaphone import doublemetaphone
 High_Freq_Cutoff    = 6      # demote very common 3-letter words
 DEFAULT_MAX_RESULTS = 700    # cap on total results
 
-# --- Length‐bonus settings: scaled higher ---
-# exact match = 20, ±1 = 18, ±2 = 16, ±3 = 14, ±4 = 12, ±5 = 10, beyond = 0
-LENGTH_BONUS_MAX  = 20
-LENGTH_BONUS_STEP = 2
+# --- Length‐bonus settings: tripled scale ---
+# exact match = 60, ±1 = 54, ±2 = 48, ±3 = 42, ±4 = 36, ±5 = 30, beyond = 0
+LENGTH_BONUS_MAX  = 60
+LENGTH_BONUS_STEP = 6
 
 β_LENGTH          = 0.2     # mild boost for longer words
 
@@ -172,7 +172,7 @@ def find_matches(query, vocab, phonetic_buckets,
             if w in cleaned:
                 boost(w, 95)
 
-    # N) sloping length bonus
+    # N) sloping length bonus (tripled scale)
     Qlen = len(q_clean)
     for w, w_cl in cleaned.items():
         if w in raw_scores:
