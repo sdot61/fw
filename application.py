@@ -15,7 +15,7 @@ DEFAULT_MAX_RESULTS = 700    # cap on total results
 
 # length-bonus scale
 LENGTH_BONUS_MAX   = 50      # exact-length match bonus
-LENGTH_BONUS_STEP  = 10      # fall-off per char
+LENGTH_BONUS_STEP  = 10      # fall-off per character difference
 β_LENGTH           = 0.1     # mild boost for longer words
 
 # --- Flask setup ---------------------------
@@ -30,6 +30,7 @@ with open("finneganswake.txt", "r") as f:
 vocab = set()
 positions = {}
 word_re = re.compile(r"\b[\w'-]+\b")
+
 for lineno, line in enumerate(lines):
     for raw in word_re.findall(line):
         stripped = raw.strip(string.punctuation)
@@ -55,6 +56,7 @@ def ngram_overlap(a: str, b: str, n: int = 3) -> float:
         return 0.0
     return len(a_grams & b_grams) / min(len(a_grams), len(b_grams))
 
+# precompute frequencies
 freq     = {w: len(positions[w]) for w in vocab}
 max_freq = max(freq.values())
 
@@ -67,6 +69,7 @@ def freq_factor(w: str) -> float:
     f = freq[w] / max_freq
     return max(0.0, 1 - math.sqrt(f))
 
+
 # --- Core matching pipeline --------------
 def find_matches(query, vocab, phonetic_buckets,
                  max_results=DEFAULT_MAX_RESULTS):
@@ -75,7 +78,7 @@ def find_matches(query, vocab, phonetic_buckets,
     if not q_clean:
         return []
 
-    # truncate at apostrophe
+    # build cleaned forms (truncate at apostrophe)
     cleaned = {}
     for w in vocab:
         base = w.split("'", 1)[0]
@@ -92,24 +95,24 @@ def find_matches(query, vocab, phonetic_buckets,
     # A) full-substring anywhere 
     for w, w_cl in cleaned.items():
         if q_clean in w_cl:
-            boost(w, 250)
+            boost(w, 120)
 
     # B) full-prefix → 110
     for w, w_cl in cleaned.items():
         if w_cl.startswith(q_clean):
             boost(w, 110)
 
-    # C) cleaned ratio (fuzz.ratio) ≥ 65 → up to 100
+    # C) cleaned ratio (fuzz.ratio) ≥ 60 → up to 100  ← lowered from 65
     for w, w_cl in cleaned.items():
         sc = fuzz.ratio(q_clean, w_cl)
-        if sc >= 65:
+        if sc >= 60:
             boost(w, sc)
 
-    # D) partial-prefix (first 3)
+    # D) partial-prefix (first 3) → 105
     pre3 = q_clean[:3]
     for w, w_cl in cleaned.items():
         if w_cl.startswith(pre3) and not w_cl.startswith(q_clean):
-            boost(w, 125)
+            boost(w, 105)
 
     # E) first-4 substring → 100
     first4 = q_clean[:4]
@@ -126,7 +129,7 @@ def find_matches(query, vocab, phonetic_buckets,
         if w_cl.endswith(suffix):
             boost(w, 105)
 
-    # G) single/double transposition
+    # G) transpositions
     for w, w_cl in cleaned.items():
         d = DamerauLevenshtein.distance(q_clean, w_cl)
         if d == 1:
@@ -140,10 +143,10 @@ def find_matches(query, vocab, phonetic_buckets,
         if jw >= 0.80:
             boost(w, int(jw * 100))
 
-    # I) trigram-overlap ≥ .60 → up to 100
+    # I) trigram overlap ≥ 0.50 → up to 100  ← relaxed from 0.60
     for w, w_cl in cleaned.items():
         ov = ngram_overlap(q_clean, w_cl)
-        if ov >= 0.6:
+        if ov >= 0.50:
             boost(w, int(ov * 100))
 
     # J) fuzzy token_set_ratio ≥ 70 → up to 100
@@ -196,10 +199,10 @@ def find_matches(query, vocab, phonetic_buckets,
         ff = freq_factor(w)
         normalized.append((w, raw * lf * ff))
 
-    # 3) sort
+    # 3) sort by normalized score desc, then length desc
     normalized.sort(key=lambda x: (-x[1], -len(x[0])))
 
-    # 4) tail-demotion
+    # 4) tail-demotion of 1–2 letters & over-common 3’s
     tail      = {
         w for w, _ in normalized
         if len(w) <= 2 or (len(w) == 3 and freq[w] >= High_Freq_Cutoff)
@@ -208,7 +211,7 @@ def find_matches(query, vocab, phonetic_buckets,
     tail_list = [w for w, _ in normalized if w in tail]
     ordered   = primary + tail_list
 
-    # 5) exact-literal bypass
+    # 5) exact-literal bypass at top
     exacts = [w for w, w_cl in cleaned.items() if w_cl == q_clean]
     exacts.sort(key=lambda w: min(p["line"] for p in positions[w]))
     final = []
@@ -216,17 +219,18 @@ def find_matches(query, vocab, phonetic_buckets,
         if w not in final:
             final.append(w)
 
-    # 6) filter single-letter & non-ASCII
+    # 6) drop single-letter & non-ASCII for multi-char queries
     if len(q_clean) > 1:
         final = [w for w in final if len(cleaned[w]) > 1 and w.isascii()]
 
     return final[:max_results]
 
+
 # --- Flask routes ---------------------------
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def index():
-    if request.method=="POST":
-        q = request.form.get("searchWord","").strip()
+    if request.method == "POST":
+        q = request.form.get("searchWord", "").strip()
         if not q:
             return render_template("index.html", match=[], search_word="")
         ms  = find_matches(q, vocab, phonetic_buckets)
@@ -234,18 +238,21 @@ def index():
         return render_template("index.html", match=out, search_word=q)
     return render_template("index.html", match=[], search_word="")
 
+
 @app.route("/search", methods=["POST"])
 def search_api():
     data = request.get_json(force=True) or {}
-    q = data.get("query","").strip()
+    q = data.get("query", "").strip()
     if not q:
         return jsonify([])
     ms = find_matches(q, vocab, phonetic_buckets)
     return jsonify([{"match": w, "positions": positions[w]} for w in ms])
 
+
 @app.route("/finneganswake", methods=["GET"])
 def finneganswake():
     return render_template("finneganswake.html", lines=enumerate(lines))
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
