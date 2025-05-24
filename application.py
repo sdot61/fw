@@ -14,7 +14,7 @@ High_Freq_Cutoff    = 6      # demote very common 3-letter words
 DEFAULT_MAX_RESULTS = 700    # cap on total results
 
 # length-bonus scale you’re using
-LENGTH_BONUS_MAX   = 15      # exact-length match
+LENGTH_BONUS_MAX   = 20      # exact-length match
 LENGTH_BONUS_STEP  = 10      # fall-off per char
 
 β_LENGTH           = 0.1     # milder boost for longer words
